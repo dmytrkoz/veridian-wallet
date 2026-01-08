@@ -46,7 +46,13 @@ const ProfileStateModal = () => {
   const [isOpenProfiles, setOpenProfiles] = useState(false);
   const isOpen = useAppSelector(getShowProfileState);
   const history = useHistory();
-  const checkedProfileId = useRef<string | undefined>();
+  const checkedProfile = useRef<{
+    id: string;
+    status: CreationStatus;
+  }>({
+    id: "",
+    status: CreationStatus.COMPLETE,
+  });
 
   const setIsOpen = useCallback(
     (value: boolean) => {
@@ -89,23 +95,28 @@ const ProfileStateModal = () => {
   ]);
 
   const checkProfileState = useCallback(() => {
+    const isProfileChecked =
+      checkedProfile.current.id === currentProfile?.identity.id &&
+      checkedProfile.current.status === currentProfile?.identity.creationStatus;
+
+    if (isProfileChecked) {
+      return;
+    }
+
     if (
       !currentProfile?.identity.creationStatus ||
       !currentProfile?.identity.createdAtUTC ||
-      history.location.pathname.includes(RoutePath.PROFILE_SETUP) ||
-      (checkedProfileId.current === currentProfile?.identity.id &&
-        ![CreationStatus.FAILED, CreationStatus.PENDING].includes(
-          currentProfile?.identity.creationStatus
-        ))
+      history.location.pathname.includes(RoutePath.PROFILE_SETUP)
     ) {
       setIsOpen(false);
       return;
     }
 
-    checkedProfileId.current = currentProfile?.identity.id;
     const creationStatus = currentProfile?.identity.creationStatus;
     const groupMemberPre = currentProfile?.identity.groupMemberPre;
     const createdAtUTC = currentProfile?.identity.createdAtUTC;
+    checkedProfile.current.id = currentProfile.identity.id;
+    checkedProfile.current.status = creationStatus;
 
     if (creationStatus === CreationStatus.FAILED) {
       setIsOpen(true);
@@ -135,12 +146,6 @@ const ProfileStateModal = () => {
         };
       }
 
-      setHiddenContent(false);
-      return;
-    }
-
-    if (creationStatus === CreationStatus.PENDING && groupMemberPre) {
-      setIsOpen(true);
       setHiddenContent(false);
       return;
     }
