@@ -1,5 +1,5 @@
 import { IonButton, IonCheckbox, IonIcon, IonSpinner } from "@ionic/react";
-import { ellipsisVertical, heart, heartOutline } from "ionicons/icons";
+import { ellipsisVertical, heart, heartOutline, wallet } from "ionicons/icons";
 import { useCallback, useState } from "react";
 import { Agent } from "../../../core/agent/agent";
 import {
@@ -377,6 +377,47 @@ const CredentialDetailModule = ({
           <IonIcon
             slot="icon-only"
             icon={ellipsisVertical}
+            color="secondary"
+          />
+        </IonButton>
+        <IonButton
+          shape="round"
+          className="wallet-button"
+          data-testid="wallet-button"
+          onClick={async () => {
+            try {
+              await import("@capacitor/browser");
+              const { GoogleWalletService } = await import(
+                "../../../services/googleWalletService"
+              );
+              if (cardData) {
+                const jwt = await GoogleWalletService.createSignedJwt(cardData);
+
+                // Construct a specific Intent URL to force the Google Wallet (Play Services) to open
+                // This 'intent://' scheme tells Android to look for the Google Play Services package
+                // to handle this https URL, avoiding the browser if possible.
+                const intentUrl = `intent://pay.google.com/gp/v/save/${jwt}#Intent;scheme=https;package=com.google.android.gms;end`;
+
+                // We try the intent URL first.
+                // Note: Browser.open might not handle 'intent://' well, we might need window.open or a specific plugin.
+                // But let's try opening the standard URL which *should* be intercepted by the app if everything is right.
+                // If the user specifically wants to avoid the browser, the Intent scheme is the way to go.
+
+                // For a Capacitor app, sometimes just window.location.href = intentUrl works better for intents.
+                window.location.href = intentUrl;
+              }
+            } catch (e) {
+              showError(
+                "Failed to create Google Wallet Pass. Check config.",
+                e,
+                dispatch
+              );
+            }
+          }}
+        >
+          <IonIcon
+            slot="icon-only"
+            icon={wallet}
             color="secondary"
           />
         </IonButton>

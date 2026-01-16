@@ -1,4 +1,5 @@
-import { personAdd, refresh } from "ionicons/icons";
+import { Browser } from "@capacitor/browser";
+import { personAdd, refresh, wallet } from "ionicons/icons";
 import { useCallback, useState } from "react";
 import { Agent } from "../../../core/agent/agent";
 import { CreationStatus } from "../../../core/agent/agent.types";
@@ -49,6 +50,23 @@ const Home = () => {
 
   const handleRotateKeyClick = () => {
     setOpenRotateKeyModal(true);
+  };
+
+  const handleGoogleWalletClick = async () => {
+    // Sample JWT link (replace with a valid one for real testing)
+    // This is a generic link format; without a valid signed JWT, it will likely error on the Google end,
+    // but it proves the app can hand off to the wallet flow.
+    // Documentation: https://developers.google.com/wallet/generic/web
+    const sampleJwt =
+      "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJleGFtcGxlLWlzc3VlckBleGFtcGxlLmNvbSIsImF1ZCI6Imdvb2dsZSIsImlhdCI6MTYyMDQ1NjQwMCwidHlwIjoic2F2ZXRvd2FsbGV0IiwicGF5bG9hZCI6eyJvcmlnaW5zIjpbXSwiZ2VuZXJpY09iamVjdHMiOlt7ImlkIjoiaXNzdWVyLXdhbGxldC1pZC5vYmplY3QtaWQiLCJjbGFzc0lkIjoiaXNzdWVyLXdhbGxldC1pZC5jbGFzcy1pZCIsImxvZ28iOnsic291cmNlVXJpIjp7InVyaSI6Imh0dHBzOi8vd3d3Lmdvb2dsZS5jb20vaW1hZ2VzL2JyYW5kaW5nL3Byb2R1Y3QvMXgvZ29vZ2xlX3dhbGxldF80ThcDpwbmcifX0sImNhcmRUaXRsZSI6eyJkZWZhdWx0VmFsdWUiOnsiYm9keSI6Ikdvb2dsZSBXYWxsZXQifX0sImhlYWRlciI6eyJkZWZhdWx0VmFsdWUiOnsiYm9keSI6IkV4YW1wbGUgUGFzcyJ9fX1dfX0.sw";
+    // Note: The above JWT is clearly fake/invalid base64url data for the sake of the example placeholder.
+    // A real test requires a valid signed JWT from the issuer service.
+    // We will use a link that is known to trigger the intent, even if the payload is invalid.
+
+    // For now, let's just use the generic save URL structure.
+    const url = `https://pay.google.com/gp/v/save/${sampleJwt}`;
+
+    await Browser.open({ url });
   };
 
   const AdditionalButtons = () => {
@@ -135,6 +153,13 @@ const Home = () => {
                   handleTileClick={handleRotateKeyClick}
                 />
               </div>
+              <Tile
+                icon={wallet}
+                chevron={true}
+                title="Google Wallet PoC"
+                text="Test Add to Google Wallet"
+                handleTileClick={handleGoogleWalletClick}
+              />
             </>
           )}
         </div>
