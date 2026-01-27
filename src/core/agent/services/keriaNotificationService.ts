@@ -72,6 +72,7 @@ function isExnWithRoute(
 }
 import { ConnectionService } from "./connectionService";
 import { LATEST_CONTACT_VERSION } from "../../storage/sqliteStorage/cloudMigrations";
+import { OperationFailureQueue } from "./operationFailureQueue";
 
 class KeriaNotificationService extends AgentService {
   static readonly NOTIFICATION_NOT_FOUND = "Notification record not found";
@@ -95,6 +96,8 @@ class KeriaNotificationService extends AgentService {
   protected readonly ipexCommunications: IpexCommunicationService;
   protected readonly credentialService: CredentialService;
   protected readonly connectionService: ConnectionService;
+  protected readonly operationFailureQueue: OperationFailureQueue;
+
   protected readonly getKeriaOnlineStatus: () => boolean;
   protected readonly markAgentStatus: (online: boolean) => void;
   protected readonly connect: (retryInterval?: number) => Promise<void>;
@@ -131,6 +134,7 @@ class KeriaNotificationService extends AgentService {
     this.ipexCommunications = ipexCommunications;
     this.credentialService = credentialService;
     this.connectionService = connectionService;
+    this.operationFailureQueue = new OperationFailureQueue(this.basicStorage);
     this.getKeriaOnlineStatus = getKeriaOnlineStatus;
     this.markAgentStatus = markAgentStatus;
     this.connect = connect;
@@ -452,12 +456,7 @@ class KeriaNotificationService extends AgentService {
           );
         } catch (error) {
           /* eslint-disable no-console */
-          console.warn(
-            `Error when retrying notification ${notification.i} [attempts: ${
-              attempts + 1
-            }]`,
-            error
-          );
+          console.warn(`Error when retrying notification ${notification.i} [attempts: ${attempts + 1}]`, error);
 
           failedNotifications[notificationId] = {
             ...notificationData,
@@ -1098,11 +1097,20 @@ class KeriaNotificationService extends AgentService {
         continue;
       }
 
+      await this.operationFailureQueue.processQueue((op) =>
+        this.processOperation(op)
+      );
+
       for (const pendingOperation of this.pendingOperations) {
+        const isPendingInFailureQueue = await this.operationFailureQueue.isInFailureQueue(pendingOperation.id);
+        if (isPendingInFailureQueue) continue;
+
         try {
           await this.processOperation(pendingOperation);
         } catch (error) {
-          console.error("Error when process a operation", error);
+          if (error instanceof Error) {
+            await this.operationFailureQueue.add(pendingOperation, error);
+          }
         }
       }
 

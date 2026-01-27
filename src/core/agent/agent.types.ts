@@ -82,6 +82,7 @@ enum MiscRecordId {
   PENDING_JOIN_GROUP_METADATA = "pending-join-group-metadata",
   SEED_PHRASE_VERIFIED = "seed-phrase-verified",
   CRITICAL_ACTION_STATE = "critical-action-state",
+  FAILED_OPERATIONS = "failed_operations",
 }
 
 export type CriticalActionState = {
