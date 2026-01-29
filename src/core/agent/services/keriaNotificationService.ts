@@ -72,7 +72,7 @@ function isExnWithRoute(
 }
 import { ConnectionService } from "./connectionService";
 import { LATEST_CONTACT_VERSION } from "../../storage/sqliteStorage/cloudMigrations";
-import { OperationFailureQueue } from "./operationFailureQueue";
+import { OperationRetryManager } from './operationRetryManager';
 
 class KeriaNotificationService extends AgentService {
   static readonly NOTIFICATION_NOT_FOUND = "Notification record not found";
@@ -96,7 +96,7 @@ class KeriaNotificationService extends AgentService {
   protected readonly ipexCommunications: IpexCommunicationService;
   protected readonly credentialService: CredentialService;
   protected readonly connectionService: ConnectionService;
-  protected readonly operationFailureQueue: OperationFailureQueue;
+  protected readonly operationRetryManager: OperationRetryManager;
 
   protected readonly getKeriaOnlineStatus: () => boolean;
   protected readonly markAgentStatus: (online: boolean) => void;
@@ -134,7 +134,7 @@ class KeriaNotificationService extends AgentService {
     this.ipexCommunications = ipexCommunications;
     this.credentialService = credentialService;
     this.connectionService = connectionService;
-    this.operationFailureQueue = new OperationFailureQueue(this.basicStorage);
+    this.operationRetryManager = new OperationRetryManager(operationPendingStorage);
     this.getKeriaOnlineStatus = getKeriaOnlineStatus;
     this.markAgentStatus = markAgentStatus;
     this.connect = connect;
@@ -1087,7 +1087,6 @@ class KeriaNotificationService extends AgentService {
   }
 
   async _pollLongOperations(): Promise<void> {
-    this.pendingOperations = await this.operationPendingStorage.getAll();
     // eslint-disable-next-line no-constant-condition
     while (true) {
       if (!this.loggedIn || !this.getKeriaOnlineStatus()) {
@@ -1097,19 +1096,17 @@ class KeriaNotificationService extends AgentService {
         continue;
       }
 
-      await this.operationFailureQueue.processQueue((op) =>
-        this.processOperation(op)
-      );
+      const operationsToRetry = await this.operationRetryManager.getOperationsToRetry();
+      const newOperations = await this.operationPendingStorage.findAllByQuery({
+        retryLastAttempt: undefined,
+      });
 
-      for (const pendingOperation of this.pendingOperations) {
-        const isPendingInFailureQueue = await this.operationFailureQueue.isInFailureQueue(pendingOperation.id);
-        if (isPendingInFailureQueue) continue;
-
+      for (const operationRecord of [...operationsToRetry, ...newOperations]) {
         try {
-          await this.processOperation(pendingOperation);
+          await this.processOperation(operationRecord);
         } catch (error) {
           if (error instanceof Error) {
-            await this.operationFailureQueue.add(pendingOperation, error);
+            await this.operationRetryManager.scheduleRetry(operationRecord, error);
           }
         }
       }

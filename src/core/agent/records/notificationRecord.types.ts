@@ -14,7 +14,6 @@ interface NotificationAttempts {
 }
 
 interface OperationFailedData {
-  attempts: number;
   lastAttempt: number;
   operation: OperationPendingRecord;
   error: string;
