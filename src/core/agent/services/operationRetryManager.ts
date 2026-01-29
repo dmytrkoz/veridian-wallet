@@ -51,6 +51,7 @@ export class OperationRetryManager {
   }
 
   private getBackoffDelay(attempts: number): number {
+    if (attempts <= 0) attempts = 1;
     const index = Math.min(attempts - 1, this.BACKOFF_DELAYS.length - 1);
     return this.BACKOFF_DELAYS[index];
   }
