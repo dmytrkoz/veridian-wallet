@@ -72,7 +72,7 @@ function isExnWithRoute(
 }
 import { ConnectionService } from "./connectionService";
 import { LATEST_CONTACT_VERSION } from "../../storage/sqliteStorage/cloudMigrations";
-import { OperationRetryManager } from './operationRetryManager';
+import { OperationRetryManager } from "./operationRetryManager";
 
 class KeriaNotificationService extends AgentService {
   static readonly NOTIFICATION_NOT_FOUND = "Notification record not found";
@@ -134,7 +134,9 @@ class KeriaNotificationService extends AgentService {
     this.ipexCommunications = ipexCommunications;
     this.credentialService = credentialService;
     this.connectionService = connectionService;
-    this.operationRetryManager = new OperationRetryManager(operationPendingStorage);
+    this.operationRetryManager = new OperationRetryManager(
+      operationPendingStorage
+    );
     this.getKeriaOnlineStatus = getKeriaOnlineStatus;
     this.markAgentStatus = markAgentStatus;
     this.connect = connect;
@@ -456,7 +458,12 @@ class KeriaNotificationService extends AgentService {
           );
         } catch (error) {
           /* eslint-disable no-console */
-          console.warn(`Error when retrying notification ${notification.i} [attempts: ${attempts + 1}]`, error);
+          console.warn(
+            `Error when retrying notification ${notification.i} [attempts: ${
+              attempts + 1
+            }]`,
+            error
+          );
 
           failedNotifications[notificationId] = {
             ...notificationData,
@@ -1087,6 +1094,8 @@ class KeriaNotificationService extends AgentService {
   }
 
   async _pollLongOperations(): Promise<void> {
+    this.pendingOperations = await this.operationPendingStorage.getAll();
+
     // eslint-disable-next-line no-constant-condition
     while (true) {
       if (!this.loggedIn || !this.getKeriaOnlineStatus()) {
@@ -1096,17 +1105,26 @@ class KeriaNotificationService extends AgentService {
         continue;
       }
 
-      const operationsToRetry = await this.operationRetryManager.getOperationsToRetry();
-      const newOperations = await this.operationPendingStorage.findAllByQuery({
-        retryLastAttempt: undefined,
+      const now = Date.now();
+      const operationRecords = this.pendingOperations.filter((operation) => {
+        // new operation
+        if (operation.retryData === undefined) return true;
+        // retry operations
+        const delay = this.operationRetryManager.getBackoffDelay(
+          operation.retryData.attempts
+        );
+        return now - operation.retryData.lastAttempt >= delay;
       });
 
-      for (const operationRecord of [...operationsToRetry, ...newOperations]) {
+      for (const operationRecord of operationRecords) {
         try {
           await this.processOperation(operationRecord);
         } catch (error) {
           if (error instanceof Error) {
-            await this.operationRetryManager.scheduleRetry(operationRecord, error);
+            await this.operationRetryManager.scheduleRetry(
+              operationRecord,
+              error
+            );
           }
         }
       }
