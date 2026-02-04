@@ -184,13 +184,11 @@ export const profilesCacheSlice = createSlice({
       );
     },
     deleteNotificationById: (state, action: PayloadAction<string>) => {
-      if (!state.defaultProfile) return;
-      const defaultProfile = state.profiles[state.defaultProfile];
-      if (!defaultProfile) return;
-
-      defaultProfile.notifications = defaultProfile.notifications.filter(
-        (notification) => notification.id !== action.payload
-      );
+      Object.values(state.profiles).forEach((profile) => {
+        profile.notifications = profile.notifications.filter(
+          (n) => n.id !== action.payload
+        );
+      });
     },
     addNotification: (state, action: PayloadAction<KeriaNotification>) => {
       const targetProfile = state.profiles[action.payload.receivingPre];

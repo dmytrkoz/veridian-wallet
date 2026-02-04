@@ -173,6 +173,31 @@ describe("Profile cache", () => {
     ).toEqual(undefined);
   });
 
+  it("should delete notification when it's not current profile's notification", () => {
+    const testData = {
+      ...profileCacheFixData,
+      profiles: {
+        ...profileCacheFixData.profiles,
+        [filteredIdentifierFix[1].id]: {
+          ...profileCacheFixData.profiles[filteredIdentifierFix[1].id],
+          notifications: [notificationsFix[1]],
+        },
+      },
+    };
+
+    const action = deleteNotificationById(notificationsFix[1].id);
+
+    const nextState = profilesCacheSlice.reducer(testData, action);
+
+    const otherProfile = nextState.profiles[filteredIdentifierFix[1].id];
+
+    expect(
+      otherProfile.notifications.find(
+        (item) => item.id === notificationsFix[1].id
+      )
+    ).toEqual(undefined);
+  });
+
   it("should add notification", () => {
     const newNoti = {
       ...notificationsFix[2],
