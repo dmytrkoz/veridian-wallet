@@ -56,3 +56,4 @@ Feature: Onboarding Individual Profile Creation
     When user taps Continue button on Welcome screen
     Then user can see Homepage
 
+

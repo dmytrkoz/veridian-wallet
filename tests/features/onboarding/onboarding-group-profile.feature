@@ -54,3 +54,9 @@ Feature: Onboarding Group Profile Creation
     Given user has created group profile with group name "TestGroup" and username "GroupUser123"
     When user taps Continue button on Welcome screen
     Then user can see Group profile setup screen
+
+  @onboarding @profile @group @multisig @remote-initiator
+  Scenario: Joiner joins a 2-of-2 group proposed by the remote initiator
+    Given a remote initiator is ready and has invited the joiner to "TestGroup"
+    Then user can see Group profile setup screen
+    And the group status becomes "Active" after cloud finalization
