@@ -173,11 +173,17 @@ describe("Profile cache", () => {
     ).toEqual(undefined);
   });
 
-  it("should delete notification when it's not current profile's notification", () => {
+  it("should delete notification, despite being on a different profile at the time", () => {
     const testData = {
       ...profileCacheFixData,
       profiles: {
         ...profileCacheFixData.profiles,
+        [filteredIdentifierFix[0].id]: {
+          ...profileCacheFixData.profiles[filteredIdentifierFix[0].id],
+          notifications: profileCacheFixData.profiles[
+            filteredIdentifierFix[0].id
+          ].notifications.filter((item) => item.id !== notificationsFix[1].id),
+        },
         [filteredIdentifierFix[1].id]: {
           ...profileCacheFixData.profiles[filteredIdentifierFix[1].id],
           notifications: [notificationsFix[1]],
