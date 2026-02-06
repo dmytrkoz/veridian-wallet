@@ -1,10 +1,10 @@
+import { ACDC } from "../../../../../core/agent/services/credentialService.types";
 import {
   CredentialsMatchingApply,
   LinkedGroupInfo,
 } from "../../../../../core/agent/services/ipexCommunicationService.types";
 import { KeriaNotification } from "../../../../../core/agent/services/keriaNotificationService.types";
 import { BackReason } from "../../../../components/CredentialDetailModule/CredentialDetailModule.types";
-import { ACDC } from "../../../../../core/agent/services/credentialService.types";
 
 interface MemberInfo {
   aid: string;
@@ -34,7 +34,6 @@ interface ChooseCredentialProps {
   pageId: string;
   activeStatus: boolean;
   credentialRequest: CredentialsMatchingApply;
-  linkedGroup: LinkedGroup | null;
   reloadData: () => void;
   onBack: () => void;
   onSubmit: (credential: RequestCredential) => void;
