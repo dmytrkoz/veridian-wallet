@@ -2,14 +2,27 @@ import { OperationPendingRecord } from "../records/operationPendingRecord";
 import { OperationPendingStorage } from "../records";
 
 export class OperationRetryManager {
-  private readonly BACKOFF_DELAYS = [
-    1000, 2500, 5000, 10000, 30000, 60000, 300000, 900000,
-  ];
-
   private readonly operationPendingStorage: OperationPendingStorage;
+
+  private readonly RETRY_FETCH_INTERVAL = 5 * 60 * 1000;
+
+  private _hasNewRetries = true;
+  private _lastRetryFetchTime = 0;
 
   constructor(operationPendingStorage: OperationPendingStorage) {
     this.operationPendingStorage = operationPendingStorage;
+  }
+
+  public shouldFetchFromStorage(): boolean {
+    if (!this._hasNewRetries) return false;
+
+    const now = Date.now();
+    return now - this._lastRetryFetchTime > this.RETRY_FETCH_INTERVAL;
+  }
+
+  public confirmRetriesFetched(): void {
+    this._hasNewRetries = false;
+    this._lastRetryFetchTime = Date.now();
   }
 
   public async scheduleRetry(
@@ -25,16 +38,11 @@ export class OperationRetryManager {
     };
 
     await this.operationPendingStorage.update(operation);
+    this._hasNewRetries = true;
 
     /* eslint-disable no-console */
     console.warn(
       `Operation scheduled for retry. ID: ${operation.id}, Type: ${operation.recordType}, Attempts: ${operation.retryData.attempts}, Error: ${error.message}`
     );
-  }
-
-  public getBackoffDelay(attempts: number): number {
-    if (attempts <= 0) attempts = 1;
-    const index = Math.min(attempts - 1, this.BACKOFF_DELAYS.length - 1);
-    return this.BACKOFF_DELAYS[index];
   }
 }

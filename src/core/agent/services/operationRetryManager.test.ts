@@ -2,7 +2,8 @@ import { OperationRetryManager } from "./operationRetryManager";
 
 const now = new Date("2026-01-01T00:00:00Z");
 jest.useFakeTimers();
-jest.setSystemTime(now.getTime());
+
+const RETRY_INTERVAL_MS = 5 * 60 * 1000;
 
 const OperationPendingStorageMock = {
   update: jest.fn(),
@@ -28,66 +29,98 @@ const createMockOperation = (
   } as any;
 };
 
-const operationRetryManager = new OperationRetryManager(
-  OperationPendingStorageMock as any
-);
+let operationRetryManager: OperationRetryManager;
 
 beforeEach(() => {
   jest.clearAllMocks();
+
+  jest.setSystemTime(now.getTime());
+
+  operationRetryManager = new OperationRetryManager(
+    OperationPendingStorageMock as any
+  );
 });
 
-describe("OperationRetryManager", () => {
-  describe("scheduleRetry", () => {
-    test("should update operation with incremented attempts and log warning", async () => {
-      const mockOperation = createMockOperation("op-1", 2);
-      const error = new Error("Test error");
+describe("Initialization", () => {
+  test("should start with shouldFetchFromStorage set to true (to force initial load)", () => {
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(true);
+  });
+});
 
-      await operationRetryManager.scheduleRetry(mockOperation, error);
+describe("confirmRetriesFetched", () => {
+  test("should reset the fetch flag so subsequent checks return false", () => {
+    operationRetryManager.confirmRetriesFetched();
 
-      expect(OperationPendingStorageMock.update).toHaveBeenCalledWith({
-        ...mockOperation,
-        retryData: {
-          attempts: 3,
-          lastAttempt: now.getTime(),
-          lastError: "Test error",
-        },
-      });
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(false);
+  });
+
+  test("should update the last fetch timestamp", async () => {
+    operationRetryManager.confirmRetriesFetched();
+
+    const mockOp = createMockOperation("op.1");
+    await operationRetryManager.scheduleRetry(mockOp, new Error("err"));
+
+    jest.advanceTimersByTime(1000);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(false);
+
+    jest.advanceTimersByTime(RETRY_INTERVAL_MS);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(true);
+  });
+});
+
+describe("scheduleRetry", () => {
+  test("should update operation in storage with incremented attempts", async () => {
+    const mockOperation = createMockOperation("op.1", 2);
+    const error = new Error("Some error");
+
+    await operationRetryManager.scheduleRetry(mockOperation, error);
+
+    expect(OperationPendingStorageMock.update).toHaveBeenCalledWith({
+      ...mockOperation,
+      retryData: {
+        attempts: 3,
+        lastAttempt: now.getTime(),
+        lastError: "Some error",
+      },
     });
   });
 
-  describe("getBackoffDelay", () => {
-    test("should return correct backoff delay", () => {
-      let backoffDelay;
+  test("should set the internal flag to true to allow future fetching", async () => {
+    operationRetryManager.confirmRetriesFetched();
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(false);
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(0);
-      expect(backoffDelay).toBe(1000);
+    jest.advanceTimersByTime(RETRY_INTERVAL_MS + 1000);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(false);
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(1);
-      expect(backoffDelay).toBe(1000);
+    const mockOperation = createMockOperation("op.1", 0);
+    await operationRetryManager.scheduleRetry(mockOperation, new Error("err"));
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(2);
-      expect(backoffDelay).toBe(2500);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(true);
+  });
+});
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(3);
-      expect(backoffDelay).toBe(5000);
+describe("Timing Logic Integration", () => {
+  test("should only return true when BOTH flag is true and time has passed", async () => {
+    operationRetryManager.confirmRetriesFetched();
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(4);
-      expect(backoffDelay).toBe(10000);
+    jest.advanceTimersByTime(RETRY_INTERVAL_MS + 1000);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(false);
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(5);
-      expect(backoffDelay).toBe(30000);
+    await operationRetryManager.scheduleRetry(
+      createMockOperation("1"),
+      new Error("e")
+    );
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(6);
-      expect(backoffDelay).toBe(60000);
+    operationRetryManager.confirmRetriesFetched();
+    await operationRetryManager.scheduleRetry(
+      createMockOperation("1"),
+      new Error("e")
+    );
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(7);
-      expect(backoffDelay).toBe(300000);
+    jest.advanceTimersByTime(60 * 1000);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(false);
 
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(8);
-      expect(backoffDelay).toBe(900000);
-
-      backoffDelay = (operationRetryManager as any).getBackoffDelay(9);
-      expect(backoffDelay).toBe(900000);
-    });
+    jest.advanceTimersByTime(RETRY_INTERVAL_MS);
+    expect(operationRetryManager.shouldFetchFromStorage()).toBe(true);
   });
 });

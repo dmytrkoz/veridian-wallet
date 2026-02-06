@@ -149,12 +149,7 @@ class KeriaNotificationService extends AgentService {
     this.props.eventEmitter.on<OperationRemovedEvent>(
       EventTypes.OperationRemoved,
       (event) => {
-        const index = this.pendingOperations.findIndex(
-          (op) => op.id === event.payload.operationId
-        );
-        if (index !== -1) {
-          this.pendingOperations.splice(index, 1);
-        }
+        this._removePendingOperation(event.payload.operationId);
       }
     );
   }
@@ -1105,18 +1100,23 @@ class KeriaNotificationService extends AgentService {
         continue;
       }
 
-      const now = Date.now();
-      const operationRecords = this.pendingOperations.filter((operation) => {
-        // new operation
-        if (operation.retryData === undefined) return true;
-        // retry operations
-        const delay = this.operationRetryManager.getBackoffDelay(
-          operation.retryData.attempts
-        );
-        return now - operation.retryData.lastAttempt >= delay;
-      });
+      if (this.operationRetryManager.shouldFetchFromStorage()) {
+        try {
+          const retryableOperations =
+            await this.operationPendingStorage.findAllByQuery({
+              retryData: { $ne: undefined },
+            });
 
-      for (const operationRecord of operationRecords) {
+          for (const op of retryableOperations) {
+            if (this.pendingOperations.some((p) => p.id === op.id)) continue;
+            this.pendingOperations.push(op);
+          }
+        } finally {
+          this.operationRetryManager.confirmRetriesFetched();
+        }
+      }
+
+      for (const operationRecord of this.pendingOperations) {
         try {
           await this.processOperation(operationRecord);
         } catch (error) {
@@ -1125,6 +1125,7 @@ class KeriaNotificationService extends AgentService {
               operationRecord,
               error
             );
+            this._removePendingOperation(operationRecord.id);
           }
         }
       }
@@ -1541,6 +1542,15 @@ class KeriaNotificationService extends AgentService {
         this.pendingOperations.indexOf(operationRecord),
         1
       );
+    }
+  }
+
+  private _removePendingOperation(operationId: string): void {
+    const index = this.pendingOperations.findIndex(
+      (op) => op.id === operationId
+    );
+    if (index !== -1) {
+      this.pendingOperations.splice(index, 1);
     }
   }
 
