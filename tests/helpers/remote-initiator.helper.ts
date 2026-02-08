@@ -1,13 +1,12 @@
 /**
- * Remote Initiator Helper for 2-of-2 Multi-sig Group Profile E2E tests.
- * Roles: Remote Initiator (host, signify-ts) proposes the group; Joiner (app, Appium) joins.
- * Uses the same SignifyClient / createInceptionData / submitInceptionData and operations polling
- * as the repo's multi-sig services. Host-side calls use getKeriaUrlsForTestRunner() for KERIA
- * ports 3901/3903 on the host (127.0.0.1 or KERIA_IP).
+ * E2E helper for 2-of-2 multisig group:
+ *   User("Initiator") in this file = Bob on host
+ *   app (Alice) — resolves our OOBI via Scan; we resolve Joiner's OOBI from app Provide tab
+ *
+ * BE_HELP: Comments marked "BE_HELP" are places where we need your input (API shape, errors, timing).
  */
 import {
   Algos,
-  b,
   CreateIdentifierBody,
   d,
   HabState,
@@ -23,215 +22,263 @@ import { getKeriaUrlsForTestRunner } from "./ssi-agent-urls.helper.js";
 
 const MULTISIG_ICP_ROUTE = "/multisig/icp";
 
-/** Poll interval for long-running operation (ms). */
 const OP_POLL_INTERVAL_MS = 2000;
-/** Max wait for group inception to complete on backend (ms). */
 const GROUP_OP_TIMEOUT_MS = 60000;
+const INITIATOR_BRAN = process.env.REMOTE_INITIATOR_BRAN ?? "0AAAAAAAAAAAAAAAAAAAA";
 
-/** 21-char bran for the Initiator (SignifyClient requires at least 21 chars). */
-const INITIATOR_BRAN =
-  process.env.REMOTE_INITIATOR_BRAN ?? "0AAAAAAAAAAAAAAAAAAAA";
+/** BE_HELP:
+ *  If group creation should use different witness config, please confirm. */
+function getWitnessConfigFromHab(mHab: HabState): { toad: number; wits: string[] } {
+  const toad = Number(mHab.state?.bt ?? 0);
+  const wits = (mHab.state?.b as string[]) ?? [];
+  return { toad, wits };
+}
 
-/** Initiator's member AID alias. */
-const INITIATOR_MEMBER_ALIAS = "Initiator-member";
+export async function init(): Promise<void> {
+  await ready();
+  const { bootUrl } = getKeriaUrlsForTestRunner();
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 5000);
+  try {
+    await fetch(bootUrl + "/boot", { method: "GET", signal: controller.signal });
+  } catch (e) {
+    clearTimeout(t);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `KERIA not reachable at ${bootUrl} (${msg}). Start KERIA on host (e.g. docker-compose up -d keria).`
+    );
+  }
+  clearTimeout(t);
+}
 
-export class RemoteInitiator {
-  private static instance: RemoteInitiator | null = null;
+export class User {
+  private static instance: User | null = null;
 
-  private client: SignifyClient | null = null;
-  private initiatorMemberId: string | null = null;
+  public client!: SignifyClient;
+  public prefix!: string;
+  public aidAlias: string;
 
-  private constructor() {}
-
-  static getInstance(): RemoteInitiator {
-    if (RemoteInitiator.instance == null) {
-      RemoteInitiator.instance = new RemoteInitiator();
-    }
-    return RemoteInitiator.instance;
+  constructor(prefixArg: string) {
+    this.aidAlias = `${prefixArg}_AID`;
   }
 
-  /** Check that KERIA is reachable from the host before booting. */
-  private async ensureKeriaReachable(bootUrl: string): Promise<void> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    try {
-      await fetch(bootUrl + "/boot", {
-        method: "GET",
-        signal: controller.signal,
-      });
-    } catch (e) {
-      clearTimeout(timeout);
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `RemoteInitiator: KERIA is not reachable at ${bootUrl} (${msg}). ` +
-          "Start KERIA on the host (e.g. docker-compose up -d keria) and ensure ports 3901 and 3903 are exposed."
-      );
+  static getInstance(prefixArg = "Initiator"): User {
+    if (User.instance == null) {
+      User.instance = new User(prefixArg);
     }
-    clearTimeout(timeout);
+    return User.instance;
   }
 
-  /**
-   * Boot and connect the Initiator's agent to KERIA, then create the Initiator's member AID.
-   * Host-side: uses getKeriaUrlsForTestRunner() so KERIA ports 3901/3903 are used on the host.
-   */
+  static reset(): void {
+    User.instance = null;
+  }
+
   async setup(): Promise<void> {
-    await ready();
+    await init();
     const { bootUrl, connectUrl } = getKeriaUrlsForTestRunner();
 
-    await this.ensureKeriaReachable(bootUrl);
-
-    this.client = new SignifyClient(
-      connectUrl,
-      INITIATOR_BRAN,
-      Tier.low,
-      bootUrl
-    );
+    this.client = new SignifyClient(connectUrl, INITIATOR_BRAN, Tier.low, bootUrl);
 
     try {
       const bootResult = await this.client.boot();
       if (!bootResult.ok && bootResult.status !== 409) {
-        throw new Error(
-          `RemoteInitiator: KERIA boot failed with status ${bootResult.status}`
-        );
+        throw new Error(`KERIA boot failed with status ${bootResult.status}`);
       }
-
       await this.client.connect();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("fetch failed") || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) {
-        throw new Error(
-          `RemoteInitiator: cannot reach KERIA at ${bootUrl}. ` +
-            "Ensure KERIA is running on the host (e.g. docker-compose up -d keria) and that nothing is blocking ports 3901/3903."
-        );
+        throw new Error(`Cannot reach KERIA at ${bootUrl}. Ensure KERIA is running.`);
       }
       throw err;
     }
 
-    // Create Initiator's member AID (mhab) so we can propose groups (same pattern as multi-sig services)
     try {
-      const createResult = await this.client.identifiers().create(INITIATOR_MEMBER_ALIAS, {
-        algo: Algos.salty,
-      });
-      this.initiatorMemberId = createResult.serder.pre;
+      const createResult = await this.client.identifiers().create(this.aidAlias, { algo: Algos.salty });
+      this.prefix = createResult.serder.pre;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/400/gi.test(msg) && /already incepted/gi.test(msg)) {
-        const hab = await this.client.identifiers().get(INITIATOR_MEMBER_ALIAS);
-        this.initiatorMemberId = hab.prefix;
+        const hab = await this.client.identifiers().get(this.aidAlias);
+        this.prefix = hab.prefix;
       } else {
         throw err;
       }
     }
 
-    // Authorize the agent role so OOBIs are available (same as identifierService.addEndRole)
-    const agentPre = (this.client as SignifyClient & { agent: { pre: string } }).agent?.pre;
-    if (agentPre) {
+    const role = new Role(this);
+    await role.add("agent");
+    if (role.addOperation) await this.waitOperation(role.addOperation);
+  }
+
+  AID = {
+    get: async (alias = this.aidAlias) => this.client.identifiers().get(alias),
+  };
+
+  oobi = {
+    /** Same as backend oobi.resolve(oobiUrl, contactAlias). */
+    resolve: async (oobiUrl: string, contactAlias: string): Promise<void> => {
+      const op = await this.client.oobis().resolve(oobiUrl, contactAlias);
+      const completed = await this.waitOperation(op);
+      await this.client.operations().delete(completed.name);
+    },
+    get: async () => {
+      const result = await this.client.oobis().get(this.aidAlias);
+      if (!result.oobis?.[0]) throw new Error("No OOBI for Initiator member AID");
+      return result.oobis[0];
+    },
+  };
+
+  async getState(aid: string): Promise<State> {
+    const states = await this.client.keyStates().get(aid);
+    if (!states?.[0]) throw new Error(`No key state for AID ${aid}`);
+    return states[0];
+  }
+
+  /** BE_HELP: 
+   *  We poll operations().get() until op.done. If signify-ts has wait(), we can align. */
+  async waitOperation(operation: { name: string }, timeoutMs = 30000): Promise<{ name: string; done?: boolean; error?: unknown }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
       try {
-        const addRoleOp = await this.client.identifiers().addEndRole(
-          this.initiatorMemberId,
-          "agent",
-          agentPre
-        );
-        await addRoleOp.op();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/400/gi.test(msg) && /already/gi.test(msg)) {
-          // Role already added
-        } else {
-          throw err;
-        }
-      }
+        const op = await this.client.operations().get(operation.name);
+        if (op?.done === true) return op as { name: string; done: boolean; error?: unknown };
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, OP_POLL_INTERVAL_MS));
     }
-    console.log("[RemoteInitiator] setup() complete; Initiator member AID:", this.initiatorMemberId);
+    throw new Error(`Operation ${operation.name} did not complete within ${timeoutMs}ms`);
+  }
+
+  // ---------- E2E-specific: OOBI for app (with groupId/groupName so resolveGroupConnection accepts) ----------
+  /** Returns OOBI URL; options.groupId/groupName are for app's group connection flow. */
+  async getOobi(options?: { alias?: string; groupId?: string; groupName?: string }): Promise<string> {
+    const base = await this.oobi.get();
+    const oobi = new URL(base);
+    if (options?.alias != null) oobi.searchParams.set("name", options.alias);
+    if (options?.groupId != null) oobi.searchParams.set("groupId", options.groupId);
+    if (options?.groupName != null) oobi.searchParams.set("groupName", options.groupName);
+    return oobi.toString();
+  }
+
+  /** After Joiner (app) has resolved our OOBI, we resolve Joiner's OOBI from app Provide tab; then contacts list has Joiner.
+   *  BE_HELP: contacts().list() shape — we handle both array and { contacts: [] }. Confirm which KERIA returns. */
+  async getJoinerMemberPrefixFromContacts(): Promise<string | null> {
+    const list = await this.client.contacts().list();
+    const contacts = Array.isArray(list) ? list : (list as { contacts?: { id?: string }[] }).contacts ?? [];
+    const other = contacts.find((c: { id?: string }) => c.id && c.id !== this.prefix);
+    return (other as { id: string } | undefined)?.id ?? null;
+  }
+
+  /** For debugging when getJoinerMemberPrefixFromContacts() returns null. */
+  async getContactsDebug(): Promise<{ count: number; ids: string[]; initiatorId: string }> {
+    const list = await this.client.contacts().list();
+    const contacts = Array.isArray(list) ? list : (list as { contacts?: { id?: string }[] }).contacts ?? [];
+    const ids = (contacts as { id?: string }[]).map((c) => c.id ?? "").filter(Boolean);
+    return { count: ids.length, ids, initiatorId: this.prefix };
+  }
+
+  /** create group (create + submit inception), then send /multisig/icp to Joiner. Returns groupId. */
+  async propose2of2Group(joinerMemberPrefix: string, groupName: string): Promise<string> {
+    const joinerState = await this.getState(joinerMemberPrefix);
+    const mHab = await this.AID.get() as HabState;
+    const myState = await this.getState(this.prefix);
+    const memberStates = [myState, joinerState];
+    const group = new Group(this, groupName, memberStates);
+    await group.create();
+    await group.send([joinerMemberPrefix]);
+    return group.creationResult!.serder.pre;
+  }
+
+  /**submit group inception first (anchor on witnesses), then app scans our OOBI; then we send exchange. Returns groupId. */
+  async anchorGroup(joinerMemberPrefix: string, groupName: string): Promise<string> {
+    const joinerState = await this.getState(joinerMemberPrefix);
+    const myState = await this.getState(this.prefix);
+    const memberStates = [myState, joinerState];
+    const group = new Group(this, groupName, memberStates);
+    await group.create();
+    return group.creationResult!.serder.pre;
+  }
+
+  /** BE_HELP: Poll until group op is done;  Confirm op name shape "group.<groupId>". */
+  async waitForGroupOperationComplete(groupId: string, timeoutMs = GROUP_OP_TIMEOUT_MS): Promise<void> {
+    const opName = `group.${groupId}`;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const op = await this.client.operations().get(opName) as { done?: boolean; error?: unknown };
+        if (op?.done === true) {
+          if (op.error) throw new Error(`Group inception failed: ${String(op.error)}`);
+          return;
+        }
+      } catch (e) {
+        if (Date.now() >= deadline) throw e;
+      }
+      await new Promise((r) => setTimeout(r, OP_POLL_INTERVAL_MS));
+    }
+    throw new Error(`Group inception did not complete within ${timeoutMs}ms (op: ${opName})`);
   }
 
   getClient(): SignifyClient {
-    if (this.client == null) {
-      throw new Error("RemoteInitiator: call setup() first");
-    }
     return this.client;
   }
+}
 
-  getInitiatorMemberId(): string {
-    if (this.initiatorMemberId == null) {
-      throw new Error("RemoteInitiator: call setup() first");
-    }
-    return this.initiatorMemberId;
+export class Role {
+  user: User;
+  alias: string;
+  addOperation?: { name: string };
+
+  constructor(user: User, alias: string = user.aidAlias) {
+    this.user = user;
+    this.alias = alias;
   }
 
-  /**
-   * Returns the OOBI URL for the Initiator's member AID so the Joiner (app) can resolve it.
-   * Pass groupId and groupName for group connection so the app's resolveGroupConnection accepts it.
-   */
-  async getOobi(options?: {
-    alias?: string;
-    groupId?: string;
-    groupName?: string;
-  }): Promise<string> {
-    const client = this.getClient();
-    const id = this.getInitiatorMemberId();
-    const result = await client.oobis().get(id);
-    if (!result.oobis?.[0]) {
-      throw new Error("RemoteInitiator: no OOBI for Initiator member AID");
+  async add(role: string = "agent"): Promise<this> {
+    const agentPre = (this.user.client as SignifyClient & { agent?: { pre: string } }).agent?.pre;
+    if (!agentPre) return this;
+    try {
+      const result = await this.user.client.identifiers().addEndRole(this.alias, role, agentPre);
+      const op = await result.op();
+      this.addOperation = op;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/400/gi.test(msg) && /already/gi.test(msg)) {
+        // Role already added
+      } else {
+        throw err;
+      }
     }
-    const oobi = new URL(result.oobis[0]);
-    if (options?.alias !== undefined) {
-      oobi.searchParams.set("name", options.alias);
-    }
-    if (options?.groupId !== undefined) {
-      oobi.searchParams.set("groupId", options.groupId);
-    }
-    if (options?.groupName !== undefined) {
-      oobi.searchParams.set("groupName", options.groupName);
-    }
-    const oobiStr = oobi.toString();
-    console.log("[RemoteInitiator] getOobi:", oobiStr.slice(0, 90) + (oobiStr.length > 90 ? "…" : ""));
-    return oobiStr;
+    return this;
+  }
+}
+
+export class Group {
+  user: User;
+  name: string;
+  memberStates: State[];
+  creationResult!: { serder: Serder; sigs: string[]; icp: unknown };
+
+  constructor(user: User, name: string, memberStates: State[]) {
+    this.user = user;
+    this.name = name;
+    this.memberStates = memberStates;
   }
 
-  /**
-   * Propose a 2-of-2 group: Initiator (this client) + Joiner (app).
-   * Uses createInceptionData and submitInceptionData (same as repo multi-sig services), then
-   * sends the /multisig/icp exchange to the Joiner. Does not wait for op.done; the test's
-   * And step should call waitForGroupOperationComplete(groupId) after the Joiner signs.
-   *
-   * @param joinerMemberPrefix - Joiner's member AID prefix (must already exist on KERIA)
-   * @param groupName - Group name/alias (e.g. "TestGroup")
-   * @returns The new group AID (serder.pre) for use with waitForGroupOperationComplete.
-   */
-  async propose2of2Group(
-    joinerMemberPrefix: string,
-    groupName: string
-  ): Promise<string> {
-    console.log("[RemoteInitiator] propose2of2Group(joinerMemberPrefix=%s, groupName=%s)", joinerMemberPrefix, groupName);
-    const client = this.getClient();
-    const id = this.getInitiatorMemberId();
-    const mHab: HabState = await client.identifiers().get(id);
+  async create(): Promise<this> {
+    const client = this.user.client;
+    const mHab = (await this.user.AID.get()) as HabState;
+    const { toad, wits } = getWitnessConfigFromHab(mHab);
 
-    const [joinerState] = await client.keyStates().get(joinerMemberPrefix);
-    if (!joinerState) {
-      throw new Error(
-        `RemoteInitiator: no key state for Joiner member AID ${joinerMemberPrefix}`
-      );
-    }
-
-    const states: State[] = [mHab.state, joinerState];
-    const toad = Number(mHab.state.bt ?? 0);
-    const wits = (mHab.state.b as string[]) ?? [];
-
-    // Reuse same createInceptionData / submitInceptionData pattern as multiSigService
-    const inceptionData: CreateIdentifierBody = await client
-      .identifiers()
-      .createInceptionData(groupName, {
-        algo: Algos.group,
-        mhab: mHab,
-        isith: 2,
-        nsith: 2,
-        toad,
-        wits,
-        states,
-        rstates: states,
-      });
+    const inceptionData: CreateIdentifierBody = await client.identifiers().createInceptionData(this.name, {
+      algo: Algos.group,
+      mhab: mHab,
+      isith: 2,
+      nsith: 2,
+      toad,
+      wits,
+      states: this.memberStates,
+      rstates: this.memberStates,
+    });
 
     try {
       await client.identifiers().submitInceptionData(inceptionData);
@@ -244,99 +291,39 @@ export class RemoteInitiator {
     }
 
     const serder = new Serder(inceptionData.icp);
-    const sigers = inceptionData.sigs.map((sig: string) => new Siger({ qb64: sig }));
+    this.creationResult = {
+      serder,
+      sigs: inceptionData.sigs,
+      icp: inceptionData.icp,
+    };
+    return this;
+  }
+
+  async send(recipients: string[]): Promise<void> {
+    const serder = this.creationResult.serder;
+    const sigers = this.creationResult.sigs.map((sig: string) => new Siger({ qb64: sig }));
     const ims = d(messagize(serder, sigers));
     const atc = ims.substring(serder.size);
     const embeds = { icp: [serder, atc] };
-    const smids = states.map((s) => s.i);
-    const recp = smids.filter((prefix) => prefix !== mHab.prefix);
+    const mHab = (await this.user.AID.get()) as HabState;
+    const smids = this.memberStates.map((s) => s.i);
 
-    await client.exchanges().send(
-      mHab.prefix,
+    await this.user.client.exchanges().send(
+      this.user.prefix,
       "multisig",
       mHab,
       MULTISIG_ICP_ROUTE,
-      {
-        gid: serder.pre,
-        smids,
-        rmids: smids,
-      },
+      { gid: serder.pre, smids, rmids: smids },
       embeds,
-      recp
+      recipients
     );
-
-    console.log("[RemoteInitiator] propose2of2Group sent; groupId (serder.pre):", serder.pre);
-    return serder.pre;
-  }
-
-  /**
-   * Poll KERIA operations until group inception is done (op.done === true).
-   * Uses client.operations().get("group.<groupId>") so the test proceeds only when
-   * the backend is fully notarized—no guesswork on wait time.
-   */
-  async waitForGroupOperationComplete(
-    groupId: string,
-    timeoutMs = GROUP_OP_TIMEOUT_MS,
-    intervalMs = OP_POLL_INTERVAL_MS
-  ): Promise<void> {
-    const client = this.getClient();
-    const opName = `group.${groupId}`;
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const op = await client.operations().get(opName);
-        if (op?.done === true) {
-          if (op.error) {
-            throw new Error(
-              `RemoteInitiator: group inception operation failed: ${String(op.error)}`
-            );
-          }
-          return;
-        }
-      } catch (e) {
-        if (Date.now() >= deadline) throw e;
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-    throw new Error(
-      `RemoteInitiator: group inception did not complete within ${timeoutMs}ms (op: ${opName})`
-    );
-  }
-
-  /**
-   * After the Joiner has resolved the Initiator's OOBI, the Initiator's contacts include the Joiner.
-   * Returns the contact id (Joiner's member AID) for the other contact.
-   */
-  async getJoinerMemberPrefixFromContacts(): Promise<string | null> {
-    const client = this.getClient();
-    const list = await client.contacts().list();
-    const contacts = Array.isArray(list) ? list : (list as { contacts?: unknown[] }).contacts ?? [];
-    const initiatorId = this.getInitiatorMemberId();
-    const other = contacts.find((c: unknown) => {
-      const contact = c as { id?: string };
-      return contact.id && contact.id !== initiatorId;
-    }) as { id: string } | undefined;
-    return other?.id ?? null;
-  }
-
-  /** For debugging: return contact count and ids so step can throw a clearer error. */
-  async getContactsDebug(): Promise<{ count: number; ids: string[]; initiatorId: string }> {
-    const client = this.getClient();
-    const list = await client.contacts().list();
-    const contacts = Array.isArray(list) ? list : (list as { contacts?: unknown[] }).contacts ?? [];
-    const initiatorId = this.getInitiatorMemberId();
-    const ids = (contacts as { id?: string }[]).map((c) => c.id ?? "").filter(Boolean);
-    return { count: ids.length, ids, initiatorId };
-  }
-
-  /** Reset the singleton (e.g. between test runs). */
-  static reset(): void {
-    RemoteInitiator.instance = null;
   }
 }
 
-export async function setupRemoteInitiator(): Promise<RemoteInitiator> {
-  const initiator = RemoteInitiator.getInstance();
-  await initiator.setup();
-  return initiator;
+export { User as RemoteInitiator };
+
+export async function setupRemoteInitiator(): Promise<User> {
+  const user = User.getInstance("Initiator");
+  await user.setup();
+  return user;
 }

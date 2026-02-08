@@ -172,6 +172,20 @@ export class ProfileSetupScreen {
     );
     await expect(this.welcomeTitle).toBeDisplayed();
   }
+
+  /** Wait until group is active (user on home) or timeout. */
+  async waitForGroupActive(timeoutMs: number) {
+    await browser.waitUntil(
+      async () => {
+        const url = await browser.getUrl();
+        return url.includes("/tabs/home") || url.includes("/home");
+      },
+      {
+        timeout: timeoutMs,
+        timeoutMsg: `Group did not become active within ${timeoutMs}ms (expected redirect to home)`,
+      }
+    );
+  }
 }
 
 export default new ProfileSetupScreen();
