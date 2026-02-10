@@ -41,7 +41,7 @@ Feature: Onboarding Group Profile Creation
   @onboarding @profile @group
   Scenario: User can create group profile with valid group name and username
     Given user is on Group setup screen with Group profile selected
-    When user enters group name "TestGroup"
+    When user enters group name "Alice"
     And user taps Confirm button on Group setup screen
     Then user can see Profile setup screen
     When user enters username "GroupUser123"
@@ -51,12 +51,16 @@ Feature: Onboarding Group Profile Creation
 
   @onboarding @profile @group
   Scenario: User can navigate to group profile setup screen from Welcome screen
-    Given user has created group profile with group name "TestGroup" and username "GroupUser123"
+    Given user has created group profile with group name "Alice" and username "GroupUser123"
     When user taps Continue button on Welcome screen
     Then user can see Group profile setup screen
 
-  @onboarding @profile @group @multisig @remote-initiator
-  Scenario: Joiner joins a 2-of-2 group proposed by the remote initiator
-    Given a remote initiator is ready and has invited the joiner to "TestGroup"
-    Then user can see Group profile setup screen
-    And the group status becomes "Active" after cloud finalization
+  @onboarding @profile @group @multisig @alice-initiator
+  Scenario: Initiator creates 1-of-2 group with one member (Bob) and group becomes active
+    Given Alice creates a group profile as initiator for "Alice" with single-sig member id and groupId from Salter in her OOBI
+    And Bob has resolved Alice's OOBI and created his member id with the same groupId copy-pasted into his OOBI
+    When Alice pastes Bob's OOBI on the Scan tab
+    And Alice initiates the group identifier
+    And Alice sets required and recovery signers to 1 and 1
+    And Alice sends the group requests
+    And the group status becomes "Active" when the group is ready
