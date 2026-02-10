@@ -1089,7 +1089,9 @@ class KeriaNotificationService extends AgentService {
   }
 
   async _pollLongOperations(): Promise<void> {
-    this.pendingOperations = await this.operationPendingStorage.getAll();
+    this.pendingOperations = await this.operationPendingStorage.findAllByQuery({
+      retryLastAttempt: undefined,
+    });
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -1104,11 +1106,10 @@ class KeriaNotificationService extends AgentService {
         try {
           const retryableOperations =
             await this.operationPendingStorage.findAllByQuery({
-              retryData: { $ne: undefined },
+              $not: { retryLastAttempt: undefined },
             });
 
           for (const op of retryableOperations) {
-            if (this.pendingOperations.some((p) => p.id === op.id)) continue;
             this.pendingOperations.push(op);
           }
         } finally {
