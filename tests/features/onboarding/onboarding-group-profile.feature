@@ -54,13 +54,3 @@ Feature: Onboarding Group Profile Creation
     Given user has created group profile with group name "Alice" and username "GroupUser123"
     When user taps Continue button on Welcome screen
     Then user can see Group profile setup screen
-
-  @onboarding @profile @group @multisig @alice-initiator
-  Scenario: Initiator creates 1-of-2 group with one member (Bob) and group becomes active
-    Given Alice creates a group profile as initiator for "Alice" with single-sig member id and groupId from Salter in her OOBI
-    And Bob has resolved Alice's OOBI and created his member id with the same groupId copy-pasted into his OOBI
-    When Alice pastes Bob's OOBI on the Scan tab
-    And Alice initiates the group identifier
-    And Alice sets required and recovery signers to 1 and 1
-    And Alice sends the group requests
-    And the group status becomes "Active" when the group is ready

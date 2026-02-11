@@ -82,7 +82,7 @@ export class User {
 
     const role = new Role(this);
     await role.add("agent");
-    if (role.addOperation) await this.waitOperation(role.addOperation);
+    if (role.addOperation) await this.waitOperationInternal(role.addOperation);
   }
 
   AID = {
@@ -97,7 +97,7 @@ export class User {
     },
   };
 
-  async waitOperation(operation: { name: string }, timeoutMs = 30000): Promise<{ name: string; done?: boolean; error?: unknown }> {
+  async waitOperationInternal(operation: { name: string }, timeoutMs = 30000): Promise<{ name: string; done?: boolean; error?: unknown }> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
@@ -109,6 +109,16 @@ export class User {
     throw new Error(`Operation ${operation.name} did not complete within ${timeoutMs}ms`);
   }
 
+  /** IBackendUser contract: wait for a KERIA operation to complete. */
+  async waitOperation(operationId: string, timeoutMs?: number): Promise<void> {
+    await this.waitOperationInternal({ name: operationId }, timeoutMs);
+  }
+
+  /** IBackendUser contract: return this user's AID (prefix). */
+  async getAid(): Promise<string> {
+    return this.prefix;
+  }
+
   /** Returns OOBI URL; options.groupId/groupName are for app group connection flow. */
   async getOobi(options?: { alias?: string; groupId?: string; groupName?: string }): Promise<string> {
     const base = await this.oobi.get();
@@ -117,6 +127,16 @@ export class User {
     if (options?.groupId != null) oobi.searchParams.set("groupId", options.groupId);
     if (options?.groupName != null) oobi.searchParams.set("groupName", options.groupName);
     return oobi.toString();
+  }
+
+  /**
+   * IBackendUser contract: wait for initiator's multisig ICP and accept/join the group.
+   * To be implemented by the dev; see tests/helpers/README-Backend-API.md 
+   */
+  async acceptGroupInvitation(_timeoutMs = 60000): Promise<void> {
+    throw new Error(
+      "acceptGroupInvitation is not implemented. The dev will provide the implementation per tests/helpers/README-Backend-API.md."
+    );
   }
 }
 
@@ -155,4 +175,22 @@ export async function setupRemoteBob(): Promise<User> {
   const user = User.getInstance("Bob");
   await user.setup();
   return user;
+}
+
+/**
+ * Create and set up a backend user by alias. Use for Bob (singleton) or a second user (e.g. Charlie for 2-of-3).
+ * Implements the backend-api.contract SetupBackendUser.
+ */
+export async function setupBackendUser(alias: string): Promise<User> {
+  if (alias === "Bob") {
+    return setupRemoteBob();
+  }
+  const user = new User(alias);
+  await user.setup();
+  return user;
+}
+
+/** Reset backend user state (e.g. Bob singleton). Called from step definitions via backend-helpers. */
+export function resetBackendUsers(): void {
+  User.reset();
 }

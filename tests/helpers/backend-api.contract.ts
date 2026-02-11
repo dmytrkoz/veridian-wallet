@@ -1,31 +1,20 @@
 /**
- * API contract between E2E tests and backend (KERIA/Signify) helpers.
- *
- * Tests import and call these types/functions. The architect implements helpers
- * that satisfy this contract. URL config comes from getKeriaUrlsForTestRunner() in ssi-agent-urls.helper.ts.
+ * Contract for E2E tests and backend (KERIA/Signify) helpers.
+ * Tests use these types; the implementation lives in the helper you wire from backend-helpers.ts.
+ * URLs come from getKeriaUrlsForTestRunner() in ssi-agent-urls.helper.ts.
  */
 
-/** KERIA connection config (from getKeriaUrlsForTestRunner()). */
 export interface KeriaConfig {
   bootUrl: string;
   connectUrl: string;
 }
 
-// ---------------------------------------------------------------------------
-// 1. KERIA bootstrap (shared)
-// ---------------------------------------------------------------------------
+// --- KERIA bootstrap ---
 
-/**
- * Ensure KERIA is reachable (e.g. GET boot URL).
- * Throw with a clear message if not (e.g. "Start KERIA on host").
- */
+/** Check KERIA is up (e.g. GET boot). Throw with a clear message if not. */
 export type InitKeria = () => Promise<void>;
 
-// ---------------------------------------------------------------------------
-// 2. Backend user (Bob-style) – "OOBI provider"
-// Used when the app user is the initiator (e.g. Alice) and the backend is a member
-// that only provides an OOBI with optional groupId/groupName. No group creation.
-// ---------------------------------------------------------------------------
+// --- Backend user (OOBI provider: app is initiator, backend is member) ---
 
 export interface GetOobiOptions {
   alias?: string;
@@ -33,37 +22,22 @@ export interface GetOobiOptions {
   groupName?: string;
 }
 
-/**
- * Backend user that can provide an OOBI for the app to paste.
- * Example: Bob in "Alice creates group, Bob joins via OOBI" scenario.
- */
+/** Backend user that gives an OOBI for the app to paste (e.g. Bob in Alice-creates-group flow). */
 export interface IBackendUser {
-  /** Return OOBI URL; query params groupId and groupName added when provided. */
   getOobi(options?: GetOobiOptions): Promise<string>;
-
-  /** Return this user's AID (prefix). */
   getAid(): Promise<string>;
-
-  /** Optional: clear singleton/state so next scenario gets a clean slate. */
+  /** After Alice sends the request: wait for multisig ICP and accept/join so the group becomes active. */
+  acceptGroupInvitation(timeoutMs?: number): Promise<void>;
   reset?(): void;
-
-  /** Optional: wait for a KERIA operation to complete (e.g. role add). */
   waitOperation?(operationId: string, timeoutMs?: number): Promise<void>;
 }
 
-/**
- * Create or reuse a KERIA identifier for the given alias.
- * Returns an IBackendUser instance (e.g. Bob).
- */
+/** Create or get a backend user by alias (e.g. "Bob", "Charlie"). */
 export type SetupBackendUser = (alias: string) => Promise<IBackendUser>;
 
-// ---------------------------------------------------------------------------
-// 3. Remote initiator (group proposer / joiner flow)
-// Used when the backend is the initiator and the app is the joiner.
-// ---------------------------------------------------------------------------
+// --- Remote initiator (backend proposes group, app joins) ---
 
 export interface EnsureJoinerOptions {
-  /** If provided, pre-seed using this mnemonic so app can "import wallet" with same seed. */
   seedMnemonic?: string;
 }
 
@@ -71,26 +45,13 @@ export interface CreateGroupOptions {
   joinerAid?: string;
 }
 
-/**
- * Remote initiator that can pre-seed joiner AID, create a group, and propose it to the joiner.
- * Example: "Wallet joins a group proposed by remote initiator" scenario.
- */
+/** Backend that can set up joiner, create a group, and propose it to the app. */
 export interface IRemoteInitiator {
-  /** Pre-seed or ensure the joiner AID exists in KERIA (and optionally witnesses). */
   ensureJoinerInKeria(joinerAid: string, options?: EnsureJoinerOptions): Promise<void>;
-
-  /** Create the group; optionally link to joiner. Returns at least groupId. */
   createGroup(groupName: string, options?: CreateGroupOptions): Promise<{ groupId: string }>;
-
-  /** Propose the group to the joiner so the app can see and accept the invitation. */
   proposeGroupToJoiner(groupId: string, joinerAid: string): Promise<void>;
-
-  /** Wait until the given operation completes. */
   waitForOperation(operationId: string, timeoutMs?: number): Promise<void>;
 }
 
-/**
- * One-time setup: boot/connect to KERIA, create initiator identifier if needed.
- * Returns an IRemoteInitiator instance.
- */
+/** One-time setup: connect to KERIA and create the initiator identifier. */
 export type SetupRemoteInitiator = () => Promise<IRemoteInitiator>;
