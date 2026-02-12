@@ -83,6 +83,7 @@ class KeriaNotificationService extends AgentService {
   static readonly POLL_KERIA_INTERVAL = 2000;
   static readonly CHECK_READINESS_INTERNAL = 25;
   static readonly FAILED_NOTIFICATIONS_RETRY_INTERVAL = 1000; // @TODO - foconnor: Optimise with backoff.
+  static readonly PROCESS_INTERVAL = 250;
 
   protected readonly notificationStorage!: NotificationStorage;
   protected readonly identifierStorage: IdentifierStorage;
@@ -101,6 +102,7 @@ class KeriaNotificationService extends AgentService {
 
   protected pendingOperations: OperationPendingRecord[] = [];
   private loggedIn = true;
+  private isRunning = false;
 
   constructor(
     agentServiceProps: AgentServicesProps,
@@ -138,6 +140,7 @@ class KeriaNotificationService extends AgentService {
       EventTypes.OperationAdded,
       (event) => {
         this.pendingOperations.push(event.payload.operation);
+        this.ensureLoopRunning();
       }
     );
     this.props.eventEmitter.on<OperationRemovedEvent>(
@@ -1076,42 +1079,36 @@ class KeriaNotificationService extends AgentService {
   }
 
   async pollLongOperations(): Promise<void> {
-    try {
-      await this._pollLongOperations();
-    } catch (error) {
-      console.error("Error at pollLongOperations", error);
-      setTimeout(
-        () => this.pollLongOperations(),
-        KeriaNotificationService.POLL_KERIA_INTERVAL
-      );
-    }
+    this.pendingOperations = await this.operationPendingStorage.getAll();
+    this.ensureLoopRunning();
   }
 
   async _pollLongOperations(): Promise<void> {
-    this.pendingOperations = await this.operationPendingStorage.getAll();
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      if (!this.loggedIn || !this.getKeriaOnlineStatus()) {
-        await new Promise((rs) =>
-          setTimeout(rs, KeriaNotificationService.CHECK_READINESS_INTERNAL)
-        );
-        continue;
-      }
-
-      for (const pendingOperation of this.pendingOperations) {
-        try {
-          await this.processOperation(pendingOperation);
-        } catch (error) {
-          console.error("Error when process a operation", error);
-        }
-      }
-
-      await new Promise((rs) => {
-        setTimeout(() => {
-          rs(true);
-        }, 250);
-      });
+    if (!this.loggedIn || !this.getKeriaOnlineStatus()) {
+      setTimeout(
+        () => this._pollLongOperations(),
+        KeriaNotificationService.CHECK_READINESS_INTERNAL
+      );
+      return;
     }
+
+    if (this.pendingOperations.length === 0) {
+      this.isRunning = false;
+      return;
+    }
+
+    for (const operationRecord of [...this.pendingOperations]) {
+      try {
+        await this.processOperation(operationRecord);
+      } catch (error) {
+        console.error("Error when process a operation", error);
+      }
+    }
+
+    setTimeout(
+      () => this._pollLongOperations(),
+      KeriaNotificationService.PROCESS_INTERVAL
+    );
   }
 
   async processOperation(
@@ -1518,6 +1515,13 @@ class KeriaNotificationService extends AgentService {
         this.pendingOperations.indexOf(operationRecord),
         1
       );
+    }
+  }
+
+  private ensureLoopRunning() {
+    if (!this.isRunning) {
+      this.isRunning = true;
+      this._pollLongOperations();
     }
   }
 
