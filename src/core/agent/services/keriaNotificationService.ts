@@ -82,6 +82,7 @@ class KeriaNotificationService extends AgentService {
 
   static readonly POLL_KERIA_INTERVAL = 2000;
   static readonly CHECK_READINESS_INTERNAL = 25;
+  static readonly PROCESS_INTERVAL = 250;
   static readonly FAILED_NOTIFICATIONS_RETRY_INTERVAL = 1000; // @TODO - foconnor: Optimise with backoff.
 
   protected readonly notificationStorage!: NotificationStorage;
@@ -101,6 +102,7 @@ class KeriaNotificationService extends AgentService {
 
   protected pendingOperations: OperationPendingRecord[] = [];
   private loggedIn = true;
+  isRunning = true;
 
   constructor(
     agentServiceProps: AgentServicesProps,
@@ -1090,11 +1092,9 @@ class KeriaNotificationService extends AgentService {
   async _pollLongOperations(): Promise<void> {
     this.pendingOperations = await this.operationPendingStorage.getAll();
     // eslint-disable-next-line no-constant-condition
-    while (true) {
+    do {
       if (!this.loggedIn || !this.getKeriaOnlineStatus()) {
-        await new Promise((rs) =>
-          setTimeout(rs, KeriaNotificationService.CHECK_READINESS_INTERNAL)
-        );
+        await this.sleep(KeriaNotificationService.CHECK_READINESS_INTERNAL);
         continue;
       }
 
@@ -1106,12 +1106,8 @@ class KeriaNotificationService extends AgentService {
         }
       }
 
-      await new Promise((rs) => {
-        setTimeout(() => {
-          rs(true);
-        }, 250);
-      });
-    }
+      await this.sleep(KeriaNotificationService.PROCESS_INTERVAL);
+    } while (this.isRunning);
   }
 
   async processOperation(
@@ -1519,6 +1515,10 @@ class KeriaNotificationService extends AgentService {
         1
       );
     }
+  }
+
+  private sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   onNewNotification(callback: (event: NotificationAddedEvent) => void) {

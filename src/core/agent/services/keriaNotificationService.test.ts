@@ -4317,7 +4317,7 @@ describe("Long running operation tracker", () => {
       return originalSetTimeout(callback, 0) as any;
     }) as any;
 
-    jest
+    const spy = jest
       .spyOn(keriaNotificationService as any, "_pollLongOperations")
       .mockImplementation(async () => {
         callCount++;
@@ -4348,6 +4348,7 @@ describe("Long running operation tracker", () => {
 
     global.setTimeout = originalSetTimeout;
     /* eslint-enable no-console */
+    spy.mockRestore();
   });
 
   test("Should register callback for NotificationAdded event", () => {
@@ -4982,5 +4983,52 @@ describe("Handling of failed long running operations", () => {
         type: EventTypes.OperationComplete,
       })
     );
+  });
+});
+
+describe("KeriaNotificationService - _pollLongOperations Integration", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    keriaNotificationService.isRunning = false;
+    (keriaNotificationService as any).loggedIn = true;
+    jest
+      .spyOn(keriaNotificationService as any, "getKeriaOnlineStatus")
+      .mockReturnValue(true);
+    jest
+      .spyOn(keriaNotificationService as any, "sleep")
+      .mockResolvedValue(undefined);
+  });
+
+  test("Should pick up a pending operation, process the default case, and remove it from storage", async () => {
+    const operationRecord = {
+      type: "OperationPendingRecord",
+      id: "unknown.12345",
+      recordType: "unknown",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    operationPendingStorage.getAll = jest
+      .fn()
+      .mockReturnValueOnce([operationRecord]);
+    operationsGetMock.mockResolvedValue({
+      done: true,
+      error: false,
+      response: { i: "12345" },
+      metadata: { said: "test-said" },
+    });
+
+    await keriaNotificationService._pollLongOperations();
+
+    expect(operationsGetMock).toHaveBeenCalledWith("unknown.12345");
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: EventTypes.OperationComplete,
+        payload: { opType: "unknown", oid: "12345" },
+      })
+    );
+    expect(operationPendingStorage.deleteById).toHaveBeenCalledWith(
+      operationRecord.id
+    );
+    expect((keriaNotificationService as any).pendingOperations).toHaveLength(0);
   });
 });
