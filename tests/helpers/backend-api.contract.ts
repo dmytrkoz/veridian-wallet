@@ -172,11 +172,22 @@ export class VirtualWallet {
   async acceptGroupInvitation(timeoutMs: number = 30000, groupName: string = "MultisigGroup"): Promise<void> {
     console.log(`[${this.alias}] Waiting for group invitation (multisig/icp)...`);
 
-    const notes = await this.waitForNotification("/multisig/icp", timeoutMs);
-    const exchange = await this.client.exchanges().get(notes[0].a.d);
-    await this.client.notifications().mark(notes[0].i);
+    const notifications = await this.waitForNotification("/multisig/icp", timeoutMs);
+    const icpMsg = await this.client
+      .groups()
+      .getRequest(notifications[0].a.i)
+      .catch((error) => {
+        const status = error.message.split(" - ")[1];
+        if (/404/gi.test(status)) {
+          throw new Error(
+            `There's no exchange message for the given SAID ${notifications[0].a.i}`
+          );
+        } else {
+          throw error;
+        }
+      });
 
-    const exn = exchange.exn;
+    const exn = icpMsg[0].exn;
     const icpParams = exn.e.icp;
     const smids = exn.a.smids;
     const rmids = exn.a.rmids || smids;
