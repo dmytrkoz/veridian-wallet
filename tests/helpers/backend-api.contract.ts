@@ -127,6 +127,17 @@ export class VirtualWallet {
       await this.waitOperation(await result.op());
       const aid = await this.client.identifiers().get(this.aidName);
       this.prefix = aid.prefix;
+
+      const agentPre = (this.client as SignifyClient & { agent?: { pre: string } }).agent?.pre;
+      if (agentPre) {
+        try {
+          const roleResult = await this.client.identifiers().addEndRole(this.aidName, "agent", agentPre);
+          await this.waitOperation(await roleResult.op());
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/400/gi.test(msg) || !/already/gi.test(msg)) throw err;
+        }
+      }
     } catch (e) {
       if (e instanceof Error) console.error(`[${this.alias}] Failed init: ${e.message}`);
     }
@@ -140,7 +151,22 @@ export class VirtualWallet {
   async getOobi(options?: GetOobiOptions): Promise<string> {
     const role = options?.role || "agent";
     const result = await this.client.oobis().get(this.aidName, role);
-    return result.oobis[0];
+    let url = result.oobis[0];
+    if (!url || typeof url !== "string") {
+      throw new Error("KERIA oobis.get returned no OOBI URL");
+    }
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      const base = this.config.connectUrl.replace(/\/$/, "");
+      url = url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
+    }
+    if (options?.alias != null || options?.groupId != null || options?.groupName != null) {
+      const u = new URL(url);
+      if (options.alias != null) u.searchParams.set("name", options.alias);
+      if (options.groupId != null) u.searchParams.set("groupId", options.groupId);
+      if (options.groupName != null) u.searchParams.set("groupName", options.groupName);
+      url = u.toString();
+    }
+    return url;
   }
 
   async acceptGroupInvitation(timeoutMs: number = 30000, groupName: string = "MultisigGroup"): Promise<void> {
