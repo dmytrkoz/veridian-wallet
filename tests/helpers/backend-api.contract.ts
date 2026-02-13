@@ -20,6 +20,16 @@ export interface KeriaConfig {
   connectUrl: string;
 }
 
+interface WitnessConfig {
+  eid: string;
+  oobi: string;
+}
+
+export interface WitnessesConfig {
+  toad: number;
+  witnesses: WitnessConfig[];
+}
+
 // --- KERIA bootstrap ---
 
 /** Check KERIA is up (e.g. GET boot). Throw with a clear message if not. */
@@ -68,31 +78,33 @@ export interface IRemoteInitiator {
 /** One-time setup: connect to KERIA and create the initiator identifier. */
 export type SetupRemoteInitiator = () => Promise<IRemoteInitiator>;
 
-/** Factory to create a standard Joiner (BackendUser) */
+/** Factory to create a standard Joiner (VirtualWallet) */
 export const createBackendUser = async (
   alias: string,
-  config: KeriaConfig
-): Promise<BackendUser> => {
+  config: KeriaConfig,
+  witnessesConfig: WitnessesConfig
+): Promise<VirtualWallet> => {
   await ready();
-  const user = new BackendUser(alias, config);
-  await user.init();
+  const user = new VirtualWallet(alias, config);
+  await user.init(witnessesConfig);
   return user;
 };
 
 /** Factory to create an Initiator (RemoteInitiator) */
 export const createRemoteInitiator = async (
   alias: string,
-  config: KeriaConfig
+  config: KeriaConfig,
+  witnessesConfig: WitnessesConfig
 ): Promise<RemoteInitiator> => {
   await ready();
   const user = new RemoteInitiator(alias, config);
-  await user.init();
+  await user.init(witnessesConfig);
   return user;
 };
 
 const TEST_WITNESSES: string[] = []; //TODO: @ash figure out how to get them
 
-export class BackendUser {
+export class VirtualWallet {
   public client: SignifyClient;
   public aidName: string;
   public prefix: string | undefined;
@@ -106,15 +118,12 @@ export class BackendUser {
     this.aidName = `${alias}_AID`;
   }
 
-  async init(): Promise<void> {
+  async init(witnesses: WitnessesConfig): Promise<void> {
     await this.client.boot();
     await this.client.connect();
 
     try {
-      const result = await this.client.identifiers().create(this.aidName, {
-        toad: 0,
-        wits: TEST_WITNESSES
-      });
+      const result = await this.client.identifiers().create(this.aidName, witnesses);
       await this.waitOperation(await result.op());
       const aid = await this.client.identifiers().get(this.aidName);
       this.prefix = aid.prefix;
@@ -199,7 +208,7 @@ export class BackendUser {
   }
 }
 
-export class RemoteInitiator extends BackendUser {
+export class RemoteInitiator extends VirtualWallet {
 
   async resolveOobi(oobi: string, alias: string): Promise<void> {
     console.log(`[${this.alias}] Resolving OOBI for ${alias}...`);
