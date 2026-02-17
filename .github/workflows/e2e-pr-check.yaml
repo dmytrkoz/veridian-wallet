@@ -74,11 +74,44 @@ jobs:
       - name: Give KERIA some time to fully initialize
         run: sleep 15
 
+      - name: Log E2E build env (for debugging)
+        run: |
+          echo "=== E2E build env (next step will bake these into the app) ==="
+          echo "build:e2e runs with: ENVIRONMENT=local (from npm script), KERIA_IP=10.0.2.2 (from step env)"
+          echo "-> app loads configs/local.yaml and setKeriaIp(10.0.2.2) for emulator host"
+
       - name: Build project for E2E
         env:
           LANG: en_US.UTF-8
           KERIA_IP: "10.0.2.2"
         run: npm run build:e2e
+
+      - name: Verify cleartext HTTP allowed for emulator (debug)
+        run: |
+          echo "=== Cleartext/HTTP allow for 10.0.2.2 (emulator host) ==="
+          DEBUG_MF="android/app/src/debug/AndroidManifest.xml"
+          NET_SEC="android/app/src/debug/res/xml/network_security_config.xml"
+          if [ ! -f "$DEBUG_MF" ]; then
+            echo "::error::Missing $DEBUG_MF (debug manifest with cleartext config)"
+            exit 1
+          fi
+          if ! grep -q 'networkSecurityConfig\|usesCleartextTraffic' "$DEBUG_MF"; then
+            echo "::error::$DEBUG_MF should set networkSecurityConfig and/or usesCleartextTraffic for emulator HTTP"
+            cat "$DEBUG_MF"
+            exit 1
+          fi
+          if [ ! -f "$NET_SEC" ]; then
+            echo "::error::Missing $NET_SEC (cleartext permitted for 10.0.2.2)"
+            exit 1
+          fi
+          if ! grep -q '10.0.2.2\|cleartextTrafficPermitted' "$NET_SEC"; then
+            echo "::error::$NET_SEC should allow cleartext for domain 10.0.2.2"
+            cat "$NET_SEC"
+            exit 1
+          fi
+          echo "OK: debug manifest and network_security_config present; cleartext allowed for 10.0.2.2"
+          grep -E 'networkSecurityConfig|usesCleartextTraffic' "$DEBUG_MF" || true
+          cat "$NET_SEC"
 
       - name: Build Android APK (debug)
         run: |
@@ -87,7 +120,15 @@ jobs:
           cd ..
           # Debug APK has cleartext permitted for 10.0.2.2 (emulator host) via app/src/debug/
           APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::No APK found under android/app/build/outputs/apk/debug"
+            ls -la android/app/build/outputs/apk/debug 2>/dev/null || true
+            exit 1
+          fi
           echo "APP_PATH=$APK_PATH" >> "$GITHUB_ENV"
+          echo "=== APK selected for emulator ==="
+          echo "APP_PATH=$APK_PATH"
+          ls -la "$APK_PATH"
 
       - name: Start Appium
         run: |
@@ -117,7 +158,11 @@ jobs:
           disable-animations: true
           disk-size: 6000M
           heap-size: 600M
-          script: npm run e2e:onboarding
+          script: |
+            echo "=== Emulator runner: APK to install ==="
+            echo "APP_PATH=$APP_PATH"
+            ls -la "$APP_PATH" 2>/dev/null || true
+            npm run e2e:onboarding
 
       - name: Dump KERIA logs on E2E failure
         if: failure() && steps.e2e-test.outcome == 'failure'
@@ -137,6 +182,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+      - name: Upload E2E failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: tests/screenshots/
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Report E2E test result
         if: always()
         run: |
@@ -146,7 +200,9 @@ jobs:
             echo "E2E onboarding tests failed." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "For more detail, download the e2e-allure-results artifact and run \`allure serve\` in the extracted folder." >> $GITHUB_STEP_SUMMARY
+          echo "For more detail:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Screenshots:** Download the \`e2e-screenshots\` artifact (failure screenshots as PNGs)." >> $GITHUB_STEP_SUMMARY
+          echo "- **Allure report:** Download \`e2e-allure-results\` and run \`allure serve\` in the extracted folder." >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup
         if: always()
