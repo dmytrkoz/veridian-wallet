@@ -9,6 +9,9 @@ jobs:
   e2e-onboarding-intro:
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: local
+      KERIA_IP: "10.0.2.2"
     steps:
 
       # Running some environment optimization as per https://github.com/ReactiveCircus/android-emulator-runner/issues/324#issuecomment-2009351180
@@ -54,9 +57,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # KERIA must be reachable at 10.0.2.2 (emulator → host); port mapping 3901/3903 exposes it on the host
+      # KERIA must be reachable at 10.0.2.2 (emulator → host). CI: host network so emulator reliably reaches it.
       - name: Start KERIA (Docker)
-        run: docker compose -f docker-compose.yaml up -d keria
+        run: docker compose -f docker-compose.yaml -f docker-compose.ci.yaml up -d keria
 
       - name: Wait for KERIA to be ready
         run: npx wait-on --timeout 90000 tcp:127.0.0.1:3901 tcp:127.0.0.1:3903
@@ -74,44 +77,39 @@ jobs:
       - name: Give KERIA some time to fully initialize
         run: sleep 15
 
-      - name: Log E2E build env (for debugging)
+      - name: Verify KERIA /connect (Signify discovery) responds
         run: |
-          echo "=== E2E build env (next step will bake these into the app) ==="
-          echo "build:e2e runs with: ENVIRONMENT=local (from npm script), KERIA_IP=10.0.2.2 (from step env)"
-          echo "-> app loads configs/local.yaml and setKeriaIp(10.0.2.2) for emulator host"
+          resp=$(curl -s -w "\n%{http_code}" --connect-timeout 5 http://127.0.0.1:3903/connect) || { echo "::error::KERIA /connect request failed"; exit 1; }
+          body=$(echo "$resp" | head -n -1)
+          code=$(echo "$resp" | tail -n 1)
+          [ "$code" = "200" ] || { echo "::error::KERIA /connect returned HTTP $code (expected 200)"; echo "$body" | head -5; exit 1; }
+          echo "$body" | grep -q "connectUrl" || { echo "::error::KERIA /connect response missing connectUrl (Signify discovery)"; echo "$body" | head -5; exit 1; }
+          echo "OK: KERIA /connect returns 200 with connectUrl (Signify discovery OK)"
 
       - name: Build project for E2E
         env:
           LANG: en_US.UTF-8
-          KERIA_IP: "10.0.2.2"
         run: npm run build:e2e
+
+      - name: Verify build used KERIA_IP (emulator host)
+        run: |
+          echo "=== Checking built app contains 10.0.2.2 (baked in from KERIA_IP) ==="
+          if ! grep -rq "10.0.2.2" build/ 2>/dev/null; then
+            echo "::error::Build output does not contain 10.0.2.2; app may use 127.0.0.1 and fail on emulator. Check job env KERIA_IP and webpack DefinePlugin."
+            exit 1
+          fi
+          echo "OK: build contains 10.0.2.2 (KERIA_IP was applied)"
+          grep -ro "10.0.2.2" build/ 2>/dev/null | head -5
 
       - name: Verify cleartext HTTP allowed for emulator (debug)
         run: |
-          echo "=== Cleartext/HTTP allow for 10.0.2.2 (emulator host) ==="
           DEBUG_MF="android/app/src/debug/AndroidManifest.xml"
           NET_SEC="android/app/src/debug/res/xml/network_security_config.xml"
-          if [ ! -f "$DEBUG_MF" ]; then
-            echo "::error::Missing $DEBUG_MF (debug manifest with cleartext config)"
-            exit 1
-          fi
-          if ! grep -q 'networkSecurityConfig\|usesCleartextTraffic' "$DEBUG_MF"; then
-            echo "::error::$DEBUG_MF should set networkSecurityConfig and/or usesCleartextTraffic for emulator HTTP"
-            cat "$DEBUG_MF"
-            exit 1
-          fi
-          if [ ! -f "$NET_SEC" ]; then
-            echo "::error::Missing $NET_SEC (cleartext permitted for 10.0.2.2)"
-            exit 1
-          fi
-          if ! grep -q '10.0.2.2\|cleartextTrafficPermitted' "$NET_SEC"; then
-            echo "::error::$NET_SEC should allow cleartext for domain 10.0.2.2"
-            cat "$NET_SEC"
-            exit 1
-          fi
-          echo "OK: debug manifest and network_security_config present; cleartext allowed for 10.0.2.2"
-          grep -E 'networkSecurityConfig|usesCleartextTraffic' "$DEBUG_MF" || true
-          cat "$NET_SEC"
+          [ -f "$DEBUG_MF" ] || { echo "::error::Missing $DEBUG_MF"; exit 1; }
+          grep -q 'networkSecurityConfig\|usesCleartextTraffic' "$DEBUG_MF" || { echo "::error::$DEBUG_MF missing networkSecurityConfig/usesCleartextTraffic"; exit 1; }
+          [ -f "$NET_SEC" ] || { echo "::error::Missing $NET_SEC"; exit 1; }
+          grep -q '10.0.2.2\|cleartextTrafficPermitted' "$NET_SEC" || { echo "::error::$NET_SEC missing cleartext for 10.0.2.2"; exit 1; }
+          echo "OK: cleartext allowed for 10.0.2.2 (debug)"
 
       - name: Build Android APK (debug)
         run: |
@@ -168,7 +166,7 @@ jobs:
         if: failure() && steps.e2e-test.outcome == 'failure'
         run: |
           echo "=== KERIA container logs (last 200 lines) ==="
-          docker compose -f docker-compose.yaml logs --tail=200 keria || true
+          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml logs --tail=200 keria || true
           echo "=== Host connectivity check ==="
           curl -s -o /dev/null -w "127.0.0.1:3901(connect) -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3901/ || true
           curl -s -o /dev/null -w "127.0.0.1:3903(boot) -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3903/ || true

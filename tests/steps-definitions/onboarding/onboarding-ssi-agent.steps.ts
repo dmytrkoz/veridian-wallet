@@ -140,8 +140,8 @@ When(/^user tap Validate button on SSI Agent Details screen$/, async function() 
   );
 
   await SsiAgentDetailsScreen.tapOnValidatedButton();
-  // CI: KERIA can be slower (cold, shared CPU); allow time for boot/connect + response before asserting
-  await browser.pause(35000);
+  // CI: boot + connect + sync can be slow; allow time before checking (55s) then wait for navigation (60s)
+  await browser.pause(55000);
 
   const bootUrlError = await SsiAgentDetailsScreen.bootUrlError.isDisplayed().catch(() => false);
   const connectUrlError = await SsiAgentDetailsScreen.connectUrlError.isDisplayed().catch(() => false);
@@ -153,23 +153,15 @@ When(/^user tap Validate button on SSI Agent Details screen$/, async function() 
     throw new Error(`Validation failed. Boot URL error: ${bootErrorText}, Connect URL error: ${connectErrorText}, Current URL: ${currentUrl}`);
   }
 
-  if (currentUrl.includes("ssiagent") && !currentUrl.includes("profile-setup")) {
-    const pageText = await browser.execute(() => {
-      const errorElements = document.querySelectorAll('[data-testid*="error"], [class*="error"], [class*="Error"]');
-      return Array.from(errorElements).map(el => el.textContent).filter(Boolean).join(" | ");
-    }).catch(() => "");
-
-    throw new Error(`Validation failed but no error detected. Still on SSI agent screen. Current URL: ${currentUrl}. Page errors: ${pageText}`);
-  }
-
+  // Wait for navigation to profile-setup (allow up to 60s more for slow CI)
   await browser.waitUntil(
     async () => {
       const url = await browser.getUrl();
       return url.includes("profile-setup");
     },
     {
-      timeout: 45000,
-      timeoutMsg: `Did not navigate to Profile type screen. Current URL: ${currentUrl}`,
+      timeout: 60000,
+      timeoutMsg: "Did not navigate to Profile type screen within 60s (boot/connect/sync may still be running or failed)",
     }
   );
 });
