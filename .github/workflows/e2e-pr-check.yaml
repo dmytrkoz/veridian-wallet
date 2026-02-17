@@ -71,7 +71,7 @@ jobs:
           done
           echo "KERIA did not respond on 3901/3903"; exit 1
 
-      - name: Give KERIA time to fully initialize
+      - name: Give KERIA some time to fully initialize
         run: sleep 15
 
       - name: Build project for E2E
