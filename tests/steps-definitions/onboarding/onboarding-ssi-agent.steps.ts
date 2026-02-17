@@ -140,8 +140,8 @@ When(/^user tap Validate button on SSI Agent Details screen$/, async function() 
   );
 
   await SsiAgentDetailsScreen.tapOnValidatedButton();
-  // CI: allow time for boot/connect to 10.0.2.2 to complete before asserting
-  await browser.pause(20000);
+  // CI: KERIA can be slower (cold, shared CPU); allow time for boot/connect + response before asserting
+  await browser.pause(35000);
 
   const bootUrlError = await SsiAgentDetailsScreen.bootUrlError.isDisplayed().catch(() => false);
   const connectUrlError = await SsiAgentDetailsScreen.connectUrlError.isDisplayed().catch(() => false);
@@ -168,7 +168,7 @@ When(/^user tap Validate button on SSI Agent Details screen$/, async function() 
       return url.includes("profile-setup");
     },
     {
-      timeout: 30000,
+      timeout: 45000,
       timeoutMsg: `Did not navigate to Profile type screen. Current URL: ${currentUrl}`,
     }
   );
