@@ -54,9 +54,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # KERIA must be reachable at 10.0.2.2 so the app can validate boot/connect URLs during onboarding
+      # KERIA must be reachable at 10.0.2.2 (emulator → host); port mapping 3901/3903 exposes it on the host
       - name: Start KERIA (Docker)
-        run: docker compose -f docker-compose.yaml -f docker-compose.ci.yaml up -d keria
+        run: docker compose -f docker-compose.yaml up -d keria
 
       - name: Wait for KERIA to be ready
         run: npx wait-on --timeout 90000 tcp:127.0.0.1:3901 tcp:127.0.0.1:3903
@@ -65,8 +65,8 @@ jobs:
         run: |
           for i in $(seq 1 45); do
             c1=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://127.0.0.1:3901/ 2>/dev/null || true)
-            c2=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://127.0.0.1:3903/ 2>/dev/null || true)
-            if [ -n "$c1" ] && [ -n "$c2" ]; then echo "KERIA responded: 3901=$c1 3903=$c2"; exit 0; fi
+            c3=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 http://127.0.0.1:3903/ 2>/dev/null || true)
+            if [ -n "$c1" ] && [ -n "$c3" ]; then echo "KERIA responded: 3901(connect)=$c1 3903(boot)=$c3"; exit 0; fi
             sleep 2
           done
           echo "KERIA did not respond on 3901/3903"; exit 1
@@ -78,7 +78,7 @@ jobs:
         env:
           LANG: en_US.UTF-8
           KERIA_IP: "10.0.2.2"
-        run: npm run build:e2e:ci
+        run: npm run build:e2e
 
       - name: Build Android APK (debug)
         run: |
@@ -123,10 +123,10 @@ jobs:
         if: failure() && steps.e2e-test.outcome == 'failure'
         run: |
           echo "=== KERIA container logs (last 200 lines) ==="
-          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml logs --tail=200 keria || true
+          docker compose -f docker-compose.yaml logs --tail=200 keria || true
           echo "=== Host connectivity check ==="
-          curl -s -o /dev/null -w "127.0.0.1:3901 -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3901/ || true
-          curl -s -o /dev/null -w "127.0.0.1:3903 -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3903/ || true
+          curl -s -o /dev/null -w "127.0.0.1:3901(connect) -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3901/ || true
+          curl -s -o /dev/null -w "127.0.0.1:3903(boot) -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3903/ || true
 
       - name: Upload E2E test report (Allure results)
         if: always()
