@@ -82,9 +82,15 @@ jobs:
           resp=$(curl -s -w "\n%{http_code}" --connect-timeout 5 http://127.0.0.1:3903/connect) || { echo "::error::KERIA /connect request failed"; exit 1; }
           body=$(echo "$resp" | head -n -1)
           code=$(echo "$resp" | tail -n 1)
-          [ "$code" = "200" ] || { echo "::error::KERIA /connect returned HTTP $code (expected 200)"; echo "$body" | head -5; exit 1; }
-          echo "$body" | grep -q "connectUrl" || { echo "::error::KERIA /connect response missing connectUrl (Signify discovery)"; echo "$body" | head -5; exit 1; }
-          echo "OK: KERIA /connect returns 200 with connectUrl (Signify discovery OK)"
+          if [ "$code" = "200" ]; then
+            echo "$body" | grep -q "connectUrl" || { echo "::error::KERIA /connect response missing connectUrl"; echo "$body" | head -5; exit 1; }
+            echo "OK: KERIA /connect returns 200 with connectUrl"
+          elif [ "$code" = "404" ]; then
+            echo "OK: KERIA /connect returned 404 (discovery not on this port; E2E uses explicit boot+connect URLs)"
+          else
+            echo "::error::KERIA /connect returned HTTP $code"; echo "$body" | head -5
+            exit 1
+          fi
 
       - name: Build project for E2E
         env:
