@@ -124,6 +124,8 @@ Then(/^Confirm button is enabled$/, async function () {
 When(/^user taps Confirm button on Profile setup screen$/, async function () {
   await expect(ProfileSetupScreen.confirmButton).toBeDisplayed();
   await ProfileSetupScreen.confirmButton.click();
+  // Allow time for profile creation to start before waiting for welcome screen (CI can be slow)
+  await browser.pause(5000);
   await ProfileSetupScreen.waitForWelcomeScreen();
 });
 

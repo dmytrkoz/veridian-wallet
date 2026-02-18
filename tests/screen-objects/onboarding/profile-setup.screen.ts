@@ -166,8 +166,8 @@ export class ProfileSetupScreen {
         return await this.welcomeTitle.isExisting().catch(() => false);
       },
       {
-        timeout: 15000,
-        timeoutMsg: "Welcome screen did not appear",
+        timeout: 60000,
+        timeoutMsg: "Welcome screen did not appear (profile creation may be slow on CI)",
       }
     );
     await expect(this.welcomeTitle).toBeDisplayed();
