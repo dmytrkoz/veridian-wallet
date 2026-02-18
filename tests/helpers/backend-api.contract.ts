@@ -64,6 +64,10 @@ export interface EnsureJoinerOptions {
 }
 
 export interface CreateGroupOptions {
+  wits?: string[];
+  isith?: number;
+  nsith?: number;
+  toad?: number;
   joinerAid?: string;
 }
 
@@ -108,6 +112,7 @@ export class VirtualWallet {
   public client: SignifyClient;
   public aidName: string;
   public prefix: string | undefined;
+  public oobi?: string;
 
   constructor(
     public alias: string,
@@ -148,6 +153,23 @@ export class VirtualWallet {
     return this.prefix;
   }
 
+  async resolveOobi(oobi: string, alias: string): Promise<void> {
+    console.log(`[${this.alias}] Resolving OOBI for ${alias}...`);
+    try {
+      const op = await this.client.oobis().resolve(oobi, alias);
+      await this.waitOperation(op);
+    } catch (e) {
+      console.warn(`[${this.alias}] OOBI resolution warning (might be resolved). ${e}`);
+    }
+  }
+
+  async generateOobi(role: string = "agent") {
+    console.log(`[${this.alias}] Generating OOBI`);
+    const result = await this.client.oobis().get(this.aidName, role);
+    this.oobi = result.oobis[0];
+  }
+
+
   async getOobi(options?: GetOobiOptions): Promise<string> {
     const role = options?.role || "agent";
     const result = await this.client.oobis().get(this.aidName, role);
@@ -173,9 +195,10 @@ export class VirtualWallet {
     console.log(`[${this.alias}] Waiting for group invitation (multisig/icp)...`);
 
     const notifications = await this.waitForNotification("/multisig/icp", timeoutMs);
+    console.log(notifications)
     const icpMsg = await this.client
       .groups()
-      .getRequest(notifications[0].a.i)
+      .getRequest(notifications[0].a.d)
       .catch((error) => {
         const status = error.message.split(" - ")[1];
         if (/404/gi.test(status)) {
@@ -247,48 +270,38 @@ export class VirtualWallet {
 
 export class RemoteInitiator extends VirtualWallet {
 
-  async resolveOobi(oobi: string, alias: string): Promise<void> {
-    console.log(`[${this.alias}] Resolving OOBI for ${alias}...`);
-    try {
-      const op = await this.client.oobis().resolve(oobi, alias);
-      await this.waitOperation(op);
-    } catch (e) {
-      console.warn(`[${this.alias}] OOBI resolution warning (might be resolved): ${e.message}`);
-    }
-  }
+  // async createAndProposeGroup(groupName: string, options: CreateGroupOptions): Promise<string> {
+  //   const myAid = await this.getAid();
 
-  async createAndProposeGroup(groupName: string, options: CreateGroupOptions): Promise<string> {
-    const myAid = await this.getAid();
+  //   const allMemberIds = [myAid, ...options.members];
+  //   const uniqueIds = Array.from(new Set(allMemberIds));
 
-    const allMemberIds = [myAid, ...options.members];
-    const uniqueIds = Array.from(new Set(allMemberIds));
+  //   const memberStates = [];
+  //   for (const memberId of uniqueIds) {
+  //     const state = await this.client.keyStates().get(memberId);
+  //     if (!state || state.length === 0) {
+  //       throw new Error(`State not found for member ${memberId}. Call resolveOobi first.`);
+  //     }
+  //     memberStates.push(state[0]);
+  //   }
 
-    const memberStates = [];
-    for (const memberId of uniqueIds) {
-      const state = await this.client.keyStates().get(memberId);
-      if (!state || state.length === 0) {
-        throw new Error(`State not found for member ${memberId}. Call resolveOobi first.`);
-      }
-      memberStates.push(state[0]);
-    }
+  //   const group = new Group(this.client, this.aidName, groupName, memberStates);
 
-    const group = new Group(this.client, this.aidName, groupName, memberStates);
+  //   await group.create({
+  //     isith: options.isith || 2,
+  //     nsith: options.nsith || 2,
+  //     toad: options.toad || 2,
+  //     wits: options.wits || TEST_WITNESSES
+  //   });
 
-    await group.create({
-      isith: options.isith || 2,
-      nsith: options.nsith || 2,
-      toad: options.toad || 2,
-      wits: options.wits || TEST_WITNESSES
-    });
+  //   const recipients = options.members;
+  //   console.log(`[${this.alias}] Proposing group ${groupName} to ${recipients.join(', ')}`);
+  //   await group.send(recipients);
 
-    const recipients = options.members;
-    console.log(`[${this.alias}] Proposing group ${groupName} to ${recipients.join(', ')}`);
-    await group.send(recipients);
+  //   await this.waitOperation(group.operation);
 
-    await this.waitOperation(group.operation);
-
-    return group.getPrefix();
-  }
+  //   return group.getPrefix();
+  // }
 }
 
 class Group {

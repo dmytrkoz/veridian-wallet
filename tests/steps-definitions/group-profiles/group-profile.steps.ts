@@ -2,7 +2,7 @@ import { After, Given, When, Then } from "@wdio/cucumber-framework";
 import { expect } from "expect-webdriverio";
 import { browser, driver } from "@wdio/globals";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
-import type { IBackendUser } from "../../helpers/backend-api.contract.js";
+import { VirtualWallet } from "../../helpers/backend-api.contract.js";
 import { resetBackendUsers, setupBackendUser } from "../../helpers/backend-helpers.js";
 import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
 
@@ -120,9 +120,9 @@ async function assertGroupProfileActiveInProfilesList(displayName: string): Prom
 }
 
 type AliceInitiatorWorld = {
-  aliceInitiatorBob?: IBackendUser;
+  aliceInitiatorBob?: VirtualWallet;
   aliceInitiatorBobOobi?: string;
-  aliceInitiatorCharlie?: IBackendUser;
+  aliceInitiatorCharlie?: VirtualWallet;
   aliceInitiatorCharlieOobi?: string;
   aliceInitiatorGroupId?: string | null;
   aliceInitiatorGroupName?: string;
@@ -137,7 +137,7 @@ Given(/^Alice creates a group profile as initiator for "(.*)" with single-sig me
   await browser.pause(500);
   await ProfileSetupScreen.confirmButton.click();
   await ProfileSetupScreen.waitForProfileSetupScreen();
-  await ProfileSetupScreen.enterUsername("GroupUser123");
+  await ProfileSetupScreen.enterUsername("Alice");
   await browser.pause(500);
   await ProfileSetupScreen.confirmButton.click();
   await ProfileSetupScreen.waitForWelcomeScreen();
@@ -175,31 +175,34 @@ Given(/^Alice creates a group profile as initiator for "(.*)" with single-sig me
 
 Given(/^Bob has resolved Alice's OOBI and created his member id with the same groupId copy-pasted into his OOBI$/, async function () {
   const bob = await setupBackendUser("Bob");
+  bob.generateOobi();
   (this as AliceInitiatorWorld).aliceInitiatorBob = bob;
   const provideTab = $("[data-testid='share-oobi-segment-button']");
   await provideTab.waitForDisplayed({ timeout: 10000 });
   await provideTab.click();
-  await browser.pause(2000);
   const installShareCapture = `
     (function() {
-      window.__lastSharedOobi = undefined;
-      var cap = window.Capacitor;
-      if (!cap || typeof cap.nativePromise !== 'function') return;
-      var orig = cap.nativePromise.bind(cap);
-      cap.nativePromise = function(pluginName, methodName, options) {
-        if (pluginName === 'Share' && methodName === 'share' && options && options.text)
-          window.__lastSharedOobi = options.text;
-        return orig(pluginName, methodName, options);
-      };
-    })();
-  `;
+        window.__lastSharedOobi = undefined;
+        var cap = window.Capacitor;
+        if (!cap || typeof cap.nativePromise !== 'function') return;
+        var orig = cap.nativePromise.bind(cap);
+        cap.nativePromise = function(pluginName, methodName, options) {
+            if (pluginName === 'Share' && methodName === 'share' && options && options.text)
+              window.__lastSharedOobi = options.text;
+            return orig(pluginName, methodName, options);
+          };
+        })();
+      `;
   await browser.execute(installShareCapture);
   const shareButton = $(".share-profile-oobi .share-button");
   await shareButton.waitForDisplayed({ timeout: 8000 });
-  await shareButton.scrollIntoView?.().catch(() => {});
+  await shareButton.scrollIntoView?.().catch(() => { });
   await shareButton.click();
-  await browser.pause(2500);
   const aliceOobiUrl = (await browser.execute(() => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi)) as string | undefined;
+  if (!aliceOobiUrl) throw new Error("Could not Share the OOBI");
+  const groupId = new URL(aliceOobiUrl).searchParams.get("groupId");
+  const groupName = new URL(aliceOobiUrl).searchParams.get("groupName");
+  await bob.resolveOobi(aliceOobiUrl, "Alice");
   await driver.pressKeyCode(4);
   await browser.pause(500);
   if (!aliceOobiUrl?.startsWith("http") || !aliceOobiUrl.includes("/oobi/")) {
@@ -215,11 +218,14 @@ Given(/^Bob has resolved Alice's OOBI and created his member id with the same gr
     );
   }
   (this as AliceInitiatorWorld).aliceInitiatorGroupId = aliceGroupId;
-  let bobOobiForApp = await bob.getOobi({ alias: "Bob", groupId: aliceGroupId, groupName: "Alice" });
   const hostUrls = getKeriaUrlsForTestRunner();
-  const bobOobiUrl = new URL(bobOobiForApp);
+  if (!bob.oobi) throw new Error("Bob has no OOBI generated yet.")
+  const bobOobiUrl = new URL(bob.oobi);
   bobOobiUrl.hostname = new URL(hostUrls.connectUrl).hostname;
-  bobOobiForApp = bobOobiUrl.toString();
+  bobOobiUrl.searchParams.set("name", "Bob");
+  if (groupId) bobOobiUrl.searchParams.set("groupId", groupId);
+  if (groupName) bobOobiUrl.searchParams.set("groupName", groupName);
+  let bobOobiForApp = bobOobiUrl.toString();
   (this as AliceInitiatorWorld).aliceInitiatorBobOobi = bobOobiForApp;
 });
 
@@ -296,13 +302,13 @@ When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async func
   const signerAlertBtn = $("[data-testid='signer-alert-card-block'] .secondary-button");
   const signerAlertVisible = await signerAlertBtn.isDisplayed().catch(() => false);
   if (signerAlertVisible) {
-    await signerAlertBtn.scrollIntoView?.().catch(() => {});
+    await signerAlertBtn.scrollIntoView?.().catch(() => { });
     await browser.pause(300);
     await signerAlertBtn.click();
   } else {
     const setSignersFallback = $("[data-testid='signer-alert-card-block'] button");
     if (await setSignersFallback.isDisplayed().catch(() => false)) {
-      await setSignersFallback.scrollIntoView?.().catch(() => {});
+      await setSignersFallback.scrollIntoView?.().catch(() => { });
       await browser.pause(300);
       await setSignersFallback.click();
     } else {

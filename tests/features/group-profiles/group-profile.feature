@@ -24,7 +24,7 @@ Feature: Group Profile Multisig (Initiator and members)
 
   @onboarding @profile @group @multisig @alice-initiator @threshold-2of2
   Scenario: Initiator creates 2-of-2 signing threshold group with one member (Bob) and group becomes active
-    Given Alice creates a group profile as initiator for "Alice" with single-sig member id and groupId from Salter in her OOBI
+    Given Alice creates a group profile as initiator for "MultisigGroup" with single-sig member id and groupId from Salter in her OOBI
     And Bob has resolved Alice's OOBI and created his member id with the same groupId copy-pasted into his OOBI
     When Alice pastes Bob's OOBI on the Scan tab
     And Alice initiates the group identifier
