@@ -73,6 +73,18 @@ export const config: Options.Testrunner = {
       console.warn("[Setup] Process suppression failed, but proceeding...");
     }
   },
+  beforeStep: async function () {
+    try {
+      const { browser } = await import("@wdio/globals");
+      const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
+      if (fs.existsSync(screenshotsDir)) {
+        const file = path.join(screenshotsDir, "last_step_start.png");
+        await browser.saveScreenshot(file);
+      }
+    } catch (e) {
+      // Ignore; we still have afterStep fallback
+    }
+  },
   afterStep: async function (
     _step: unknown,
     _scenario: unknown,
@@ -80,14 +92,22 @@ export const config: Options.Testrunner = {
     _context: unknown
   ) {
     if (result?.status === "failed" || result?.passed === false) {
+      const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
+      if (!fs.existsSync(screenshotsDir)) return;
+      const ts = Date.now();
       try {
         const { browser } = await import("@wdio/globals");
-        const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
-        if (fs.existsSync(screenshotsDir)) {
-          const file = path.join(screenshotsDir, `fail_step_${Date.now()}.png`);
-          await browser.saveScreenshot(file);
-          console.log(`[WDIO] Step failure screenshot: ${file}`);
+        // Save "at step start" first (app screen before wait → useful). Often not the PIN lock.
+        const lastStart = path.join(screenshotsDir, "last_step_start.png");
+        if (fs.existsSync(lastStart)) {
+          const useful = path.join(screenshotsDir, `fail_step_${ts}_at_step_start.png`);
+          fs.copyFileSync(lastStart, useful);
+          console.log(`[WDIO] Step failure (screen at step start): ${useful}`);
         }
+        // Also save current screen (often PIN lock after timeout; for reference).
+        const atFailure = path.join(screenshotsDir, `fail_step_${ts}_at_failure.png`);
+        await browser.saveScreenshot(atFailure);
+        console.log(`[WDIO] Step failure (current screen): ${atFailure}`);
       } catch (e) {
         console.warn("[WDIO] Could not save step failure screenshot:", (e as Error).message);
       }

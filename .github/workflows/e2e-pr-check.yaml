@@ -57,7 +57,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # KERIA must be reachable at 10.0.2.2 (emulator → host). CI: host network so emulator reliably reaches it.
+      # KERIA runs local to this runner (Docker on the same host), not on dev k8s or any shared cluster.
+      # It must be reachable at 10.0.2.2 (emulator → host). We use host network so the emulator can reach it.
       - name: Start KERIA (Docker)
         run: docker compose -f docker-compose.yaml -f docker-compose.ci.yaml up -d keria
 
@@ -167,6 +168,9 @@ jobs:
             echo "APP_PATH=$APP_PATH"
             ls -la "$APP_PATH" 2>/dev/null || true
             npm run e2e:onboarding
+            echo "=== Dumping wallet (app) logcat ==="
+            mkdir -p tests/.reports
+            adb logcat -d -v time 2>&1 | tail -n 8000 > tests/.reports/wallet-logcat.txt || true
 
       - name: Dump KERIA logs on E2E failure
         if: failure() && steps.e2e-test.outcome == 'failure'
@@ -198,6 +202,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+      - name: Upload E2E wallet logs (logcat)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-wallet-logs
+          path: tests/.reports/wallet-logcat.txt
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Report E2E test result
         if: always()
         run: |
@@ -209,6 +222,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "For more detail:" >> $GITHUB_STEP_SUMMARY
           echo "- **Screenshots:** Download the \`e2e-screenshots\` artifact (failure screenshots)." >> $GITHUB_STEP_SUMMARY
+          echo "- **Wallet logs:** Download the \`e2e-wallet-logs\` artifact (Android logcat)." >> $GITHUB_STEP_SUMMARY
           echo "- **Allure:** Download \`e2e-allure-results\` and run \`allure serve\` in the extracted folder." >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup
