@@ -32,18 +32,37 @@ When(/^user selects Group profile option$/, async function () {
 When(/^user taps Confirm button on Profile type screen$/, async function () {
   await expect(ProfileSetupScreen.confirmButton).toBeDisplayed();
   await ProfileSetupScreen.confirmButton.click();
-  // Wait for either group setup or individual profile setup screen based on selection
-  await browser.waitUntil(
-    async () => {
-      const groupNameInput = await ProfileSetupScreen.groupNameInput.isExisting().catch(() => false);
-      const usernameInput = await ProfileSetupScreen.usernameInput.isExisting().catch(() => false);
-      return groupNameInput || usernameInput;
-    },
-    {
-      timeout: 15000,
-      timeoutMsg: "Did not navigate to setup screen after confirming profile type",
-    }
-  );
+  try {
+    // Wait for either group setup or individual profile setup screen based on selection
+    await browser.waitUntil(
+      async () => {
+        const groupNameInput = await ProfileSetupScreen.groupNameInput.isExisting().catch(() => false);
+        const usernameInput = await ProfileSetupScreen.usernameInput.isExisting().catch(() => false);
+        return groupNameInput || usernameInput;
+      },
+      {
+        timeout: 15000,
+        timeoutMsg: "Did not navigate to setup screen after confirming profile type",
+      }
+    );
+  } catch (e) {
+    // Capture visible errors (toast, error text) so we know if Confirm caused an error
+    const currentUrl = await browser.getUrl().catch(() => "");
+    const pageErrors = await browser
+      .execute(() => {
+        const errorEls = document.querySelectorAll(
+          '[data-testid*="error"], [class*="error"], [class*="Error"], ion-toast .toast-message'
+        );
+        return Array.from(errorEls)
+          .map((el) => el.textContent?.trim())
+          .filter(Boolean)
+          .join(" | ");
+      })
+      .catch(() => "");
+    throw new Error(
+      `Confirm on profile type failed. Did not navigate to setup screen. Current URL: ${currentUrl}. ${pageErrors ? `Page errors/toast: ${pageErrors}` : ""}`
+    );
+  }
   // If group setup screen, wait for it; otherwise wait for profile setup screen
   const isGroupSetup = await ProfileSetupScreen.groupNameInput.isExisting().catch(() => false);
   if (isGroupSetup) {

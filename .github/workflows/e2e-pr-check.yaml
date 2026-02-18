@@ -172,7 +172,10 @@ jobs:
         if: failure() && steps.e2e-test.outcome == 'failure'
         run: |
           echo "=== KERIA container logs (last 200 lines) ==="
-          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml logs --tail=200 keria || true
+          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml logs --tail=200 keria 2>&1 | tee /tmp/keria.log || true
+          echo ""
+          echo "=== KERIA log lines matching error/fail/exception (for debugging) ==="
+          grep -i -E 'error|fail|exception|invalid|refused|timeout|denied|500|503' /tmp/keria.log 2>/dev/null || echo "(none found)"
           echo "=== Host connectivity check ==="
           curl -s -o /dev/null -w "127.0.0.1:3901(connect) -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3901/ || true
           curl -s -o /dev/null -w "127.0.0.1:3903(boot) -> %{http_code}\n" --connect-timeout 2 http://127.0.0.1:3903/ || true
