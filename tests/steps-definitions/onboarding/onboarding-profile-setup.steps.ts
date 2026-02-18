@@ -1,6 +1,7 @@
 import { Given, Then, When } from "@wdio/cucumber-framework";
 import { expect } from "expect-webdriverio";
 import { browser } from "@wdio/globals";
+import allure from "@wdio/allure-reporter";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
 
 Then(/^user can see "Individual profile" option$/, async function () {
@@ -145,7 +146,22 @@ When(/^user taps Confirm button on Profile setup screen$/, async function () {
   await ProfileSetupScreen.confirmButton.click();
   // Allow time for profile creation to start before waiting for welcome screen (CI can be slow)
   await browser.pause(5000);
-  await ProfileSetupScreen.waitForWelcomeScreen();
+  try {
+    await ProfileSetupScreen.waitForWelcomeScreen();
+  } catch (e) {
+    const url = await browser.getUrl().catch(() => "");
+    const pageErrors = await browser
+      .execute(() => {
+        const el = document.querySelectorAll(
+          '[data-testid*="error"], [class*="error"], [class*="Error"], ion-toast .toast-message, .finish-setup'
+        );
+        return Array.from(el).map((n) => n.textContent?.trim()).filter(Boolean).join(" | ");
+      })
+      .catch(() => "");
+    const body = `URL: ${url}\nVisible error/feedback: ${pageErrors || "(none)"}`;
+    allure.addAttachment("Profile setup → Welcome failed: page state", body, "text/plain");
+    throw e;
+  }
 });
 
 When(/^user taps Confirm button on Group setup screen$/, async function () {

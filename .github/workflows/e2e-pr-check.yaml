@@ -189,6 +189,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+      - name: Upload E2E failure screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: tests/screenshots/
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Report E2E test result
         if: always()
         run: |
@@ -198,7 +207,9 @@ jobs:
             echo "E2E onboarding tests failed." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "For more detail, download the e2e-allure-results artifact and run \`allure serve\` in the extracted folder." >> $GITHUB_STEP_SUMMARY
+          echo "For more detail:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Screenshots:** Download the \`e2e-screenshots\` artifact (failure screenshots)." >> $GITHUB_STEP_SUMMARY
+          echo "- **Allure:** Download \`e2e-allure-results\` and run \`allure serve\` in the extracted folder." >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup
         if: always()

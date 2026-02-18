@@ -29,7 +29,7 @@ export const config: Options.Testrunner = {
         outputDir: "./tests/.reports/allure-results",
         addConsoleLogs: true,
         disableWebdriverStepsReporting: true,
-        disableWebdriverScreenshotsReporting: true,
+        disableWebdriverScreenshotsReporting: false,
         useCucumberStepReporter: true,
       },
     ],
@@ -157,8 +157,21 @@ export const config: Options.Testrunner = {
     }
   },
   afterScenario: async function (world, result, context) {
-    const { driver } = await import("@wdio/globals");
+    const { driver, browser } = await import("@wdio/globals");
     const appPackage = "org.cardanofoundation.idw";
+
+    if (result.passed === false) {
+      try {
+        const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
+        if (fs.existsSync(screenshotsDir)) {
+          const file = path.join(screenshotsDir, `fail_${Date.now()}.png`);
+          await browser.saveScreenshot(file);
+          console.log(`[WDIO] Failure screenshot: ${file}`);
+        }
+      } catch (e) {
+        console.warn("[WDIO] Could not save failure screenshot:", (e as Error).message);
+      }
+    }
 
     try {
       // Try direct switch to NATIVE_APP first (avoid getContexts() greedy scan)
