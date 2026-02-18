@@ -73,10 +73,37 @@ export const config: Options.Testrunner = {
       console.warn("[Setup] Process suppression failed, but proceeding...");
     }
   },
+  afterStep: async function (
+    _step: unknown,
+    _scenario: unknown,
+    result: { status?: string; passed?: boolean },
+    _context: unknown
+  ) {
+    if (result?.status === "failed" || result?.passed === false) {
+      try {
+        const { browser } = await import("@wdio/globals");
+        const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
+        if (fs.existsSync(screenshotsDir)) {
+          const file = path.join(screenshotsDir, `fail_step_${Date.now()}.png`);
+          await browser.saveScreenshot(file);
+          console.log(`[WDIO] Step failure screenshot: ${file}`);
+        }
+      } catch (e) {
+        console.warn("[WDIO] Could not save step failure screenshot:", (e as Error).message);
+      }
+    }
+  },
   beforeScenario: async function (scenario) {
     try {
       const { driver, browser } = await import("@wdio/globals");
       const { execSync } = require('child_process');
+      
+      // Keep screen on during long waits so failure screenshot shows app, not lock screen
+      try {
+        execSync('adb shell settings put system screen_off_timeout 600000', { stdio: 'ignore', timeout: 5000 });
+      } catch (e) {
+        // Ignore on iOS or if adb unavailable
+      }
       
       // Aggressive process suppression before each scenario
       try {
