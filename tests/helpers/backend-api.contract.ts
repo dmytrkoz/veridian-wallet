@@ -94,6 +94,18 @@ export const createBackendUser = async (
   return user;
 };
 
+/** Factory to create a Joiner (RemoteJoiner) */
+export const createRemoteJoiner = async (
+  alias: string,
+  config: KeriaConfig,
+  witnessesConfig: WitnessesConfig
+): Promise<RemoteJoiner> => {
+  await ready();
+  const user = new RemoteJoiner(alias, config);
+  await user.init(witnessesConfig);
+  return user;
+};
+
 /** Factory to create an Initiator (RemoteInitiator) */
 export const createRemoteInitiator = async (
   alias: string,
@@ -105,8 +117,6 @@ export const createRemoteInitiator = async (
   await user.init(witnessesConfig);
   return user;
 };
-
-const TEST_WITNESSES: string[] = []; //TODO: @ash figure out how to get them
 
 export class VirtualWallet {
   public client: SignifyClient;
@@ -191,6 +201,30 @@ export class VirtualWallet {
     return url;
   }
 
+  async waitOperation(operation: any, timeoutMs = 30000) {
+    return this.client.operations().wait(
+      operation,
+      { signal: AbortSignal.timeout(timeoutMs) }
+    );
+  }
+
+  protected async waitForNotification(route: string, timeoutMs: number, interval = 500) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const { notes } = await this.client.notifications().list();
+        const filtered = notes.filter((n: any) => n.a.r === route && n.r === false);
+        if (filtered.length > 0) return filtered;
+      } catch {
+        // ignore fetch errors and retry
+      }
+      await new Promise(r => setTimeout(r, interval));
+    }
+    throw new Error(`Timeout waiting for notification on route ${route}`);
+  }
+}
+
+export class RemoteJoiner extends VirtualWallet {
   async acceptGroupInvitation(timeoutMs: number = 30000, groupName: string = "MultisigGroup"): Promise<void> {
     console.log(`[${this.alias}] Waiting for group invitation (multisig/icp)...`);
 
@@ -245,26 +279,61 @@ export class VirtualWallet {
     console.log(`[${this.alias}] Successfully joined group.`);
   }
 
-  async waitOperation(operation: any, timeoutMs = 30000) {
-    return this.client.operations().wait(
-      operation,
-      { signal: AbortSignal.timeout(timeoutMs) }
-    );
-  }
+  async authorizeGroupAgents(groupName: string): Promise<void> {
+    console.log(`[${this.alias}] Fetching member details for group ${groupName}...`);
 
-  protected async waitForNotification(route: string, timeoutMs: number, interval = 500) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const { notes } = await this.client.notifications().list();
-        const filtered = notes.filter((n: any) => n.a.r === route && n.r === false);
-        if (filtered.length > 0) return filtered;
-      } catch (e) {
-        // ignore fetch errors and retry
-      }
-      await new Promise(r => setTimeout(r, interval));
+    const membersResult = await this.client.identifiers().members(groupName);
+    const signingMembers = membersResult.signing;
+
+    if (!signingMembers || signingMembers.length === 0) {
+      throw new Error(`No signing members found for group ${groupName}`);
     }
-    throw new Error(`Timeout waiting for notification on route ${route}`);
+
+    const myPrefix = await this.getAid();
+
+    const recipients = signingMembers
+      .map((m: any) => m.aid)
+      .filter((aid: string) => aid !== myPrefix);
+
+    console.log(`[${this.alias}] Found ${signingMembers.length} members. Starting authorization loop.`);
+
+    for (const member of signingMembers) {
+      let agentEid: string | undefined;
+
+      if (member.ends && member.ends.agent) {
+        const agentKeys = Object.keys(member.ends.agent);
+        if (agentKeys.length > 0) {
+          agentEid = agentKeys[0];
+        }
+      }
+
+      if (!agentEid && member.aid === myPrefix) {
+        agentEid = this.client.agent?.pre;
+      }
+
+      if (!agentEid) {
+        console.warn(`[${this.alias}] Skipping member ${member.aid}: No Agent Endpoint found.`);
+        continue;
+      }
+
+      console.log(`[${this.alias}] Authorizing Agent ${agentEid} for Member ${member.aid}`);
+
+      try {
+        const roleHelper = new Role(this, groupName, true);
+
+
+        await roleHelper.add("agent", agentEid);
+        if (recipients.length > 0) {
+          await roleHelper.send(recipients);
+          console.log(`[${this.alias}] Sent authorization endorsement to ${recipients.length} recipients.`);
+        }
+
+      } catch (e) {
+        console.error(`[${this.alias}] Error authorizing agent for ${member.aid}:`, e);
+      }
+    }
+
+    console.log(`[${this.alias}] Finished Agent Authorization Loop.`);
   }
 }
 
@@ -331,7 +400,7 @@ class Group {
       isith: params.isith || 2,
       nsith: params.nsith || 2,
       toad: params.toad || 2,
-      wits: params.wits || TEST_WITNESSES,
+      wits: params.wits,
       states: this.memberStates,
       rstates: params.rstates || this.memberStates,
       ...(params.delpre && { delpre: params.delpre }),
@@ -370,5 +439,97 @@ class Group {
     if (this.creationResult?.serder?.pre) return this.creationResult.serder.pre;
     const id = await this.client.identifiers().get(this.groupAlias);
     return id.prefix;
+  }
+}
+
+export class Role {
+  user: VirtualWallet;
+  alias: string;
+  addResult?: any;
+  addOperation?: any;
+  isMultisig: boolean;
+  dt: string;
+
+  constructor(user: VirtualWallet, alias: string = user.aidName, isMultisig: boolean = false) {
+    this.user = user;
+    this.alias = alias;
+    this.isMultisig = isMultisig;
+    this.dt = new Date().toISOString().replace("Z", "000+00:00");
+  }
+
+  async add(role: string = "agent", eventIdentifier?: string) {
+    let eid;
+    if (eventIdentifier) {
+      eid = eventIdentifier;
+    } else if (this.isMultisig) {
+      const ghab = await this.user.client.identifiers().get(this.alias);
+      eid = ghab.prefix;
+    }
+    else {
+      if (!this.user.client.agent?.pre) return;
+      eid = this.user.client.agent.pre;
+    }
+
+    const result = await this.user.client.identifiers().addEndRole(
+      this.alias,
+      role,
+      eid,
+      this.dt
+    );
+
+    const op = await result.op();
+    this.addResult = result;
+    this.addOperation = op;
+
+    return this;
+  }
+
+  async send(recipients: string[]) {
+    const ghab = await this.user.client.identifiers().get(this.alias);
+    const seal = [
+      'SealEvent',
+      {
+        i: ghab['prefix'],
+        s: ghab['state']['ee']['s'],
+        d: ghab['state']['ee']['d'],
+      }
+    ]
+
+    const rpy = this.addResult.serder;
+    const sigers = this.addResult.sigs.map((sig: string) => new Siger({ qb64: sig }));
+
+    const roleims = d(
+      messagize(rpy, sigers, seal, undefined, undefined, false)
+    );
+    const atc = roleims.substring(rpy.size);
+    const embeds = { rpy: [rpy, atc] };
+
+    const aid = await this.user.client.identifiers().get(this.user.aidName);
+    return this.user.client.exchanges().send(
+      this.user.aidName,
+      "multisig",
+      aid,
+      "/multisig/rpy",
+      { gid: ghab.prefix },
+      embeds,
+      recipients
+    );
+  }
+
+  async acknowledge(notification: any) {
+    this.dt = notification.e.rpy.dt;
+
+    const result = await this.user.client.identifiers().addEndRole(
+      this.alias,
+      notification.e.rpy.a.role,
+      notification.e.rpy.a.eid,
+      notification.e.rpy.dt
+    );
+
+    const op = await result.op();
+    this.addResult = result;
+    this.addOperation = op;
+
+    return this;
   }
 }

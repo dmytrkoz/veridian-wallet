@@ -2,7 +2,7 @@ import { After, Given, When, Then } from "@wdio/cucumber-framework";
 import { expect } from "expect-webdriverio";
 import { browser, driver } from "@wdio/globals";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
-import { VirtualWallet } from "../../helpers/backend-api.contract.js";
+import { RemoteJoiner } from "../../helpers/backend-api.contract.js";
 import { resetBackendUsers, setupBackendUser } from "../../helpers/backend-helpers.js";
 import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
 
@@ -73,7 +73,7 @@ async function assertGroupProfileActiveInProfilesList(displayName: string): Prom
   const avatarBtn = $("[data-testid='avatar-button']");
   await avatarBtn.waitForDisplayed({ timeout: 10000 });
   await avatarBtn.click();
-  await browser.pause(1500);
+  await browser.pause(5000);
 
   const result = await browser.execute(
     (name: string) => {
@@ -120,9 +120,9 @@ async function assertGroupProfileActiveInProfilesList(displayName: string): Prom
 }
 
 type AliceInitiatorWorld = {
-  aliceInitiatorBob?: VirtualWallet;
+  aliceInitiatorBob?: RemoteJoiner;
   aliceInitiatorBobOobi?: string;
-  aliceInitiatorCharlie?: VirtualWallet;
+  aliceInitiatorCharlie?: RemoteJoiner;
   aliceInitiatorCharlieOobi?: string;
   aliceInitiatorGroupId?: string | null;
   aliceInitiatorGroupName?: string;
@@ -348,6 +348,7 @@ When(/^Bob accepts the group invitation$/, async function () {
     throw new Error("Missing aliceInitiatorBob. Run the Given step: Bob has resolved Alice's OOBI and created his member id.");
   }
   await bob.acceptGroupInvitation(60000);
+  await bob.authorizeGroupAgents("MultisigGroup");
 });
 
 When(/^Charlie accepts the group invitation$/, async function () {
