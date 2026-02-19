@@ -168,9 +168,13 @@ jobs:
             echo "APP_PATH=$APP_PATH"
             ls -la "$APP_PATH" 2>/dev/null || true
             npm run e2e:onboarding
+            E2E_EXIT=$?
             echo "=== Dumping wallet (app) logcat ==="
-            mkdir -p tests/.reports
-            adb logcat -d -v time 2>&1 | tail -n 8000 > tests/.reports/wallet-logcat.txt || true
+            LOGDIR="${GITHUB_WORKSPACE:-.}/tests/.reports"
+            mkdir -p "$LOGDIR"
+            adb logcat -d -v time 2>&1 | tail -n 8000 > "$LOGDIR/wallet-logcat.txt" || true
+            ls -la "$LOGDIR/wallet-logcat.txt" 2>/dev/null || true
+            exit $E2E_EXIT
 
       - name: Dump KERIA logs on E2E failure
         if: failure() && steps.e2e-test.outcome == 'failure'
