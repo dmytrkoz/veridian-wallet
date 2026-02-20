@@ -1,28 +1,13 @@
 import { After, Given, When, Then } from "@wdio/cucumber-framework";
+import type { DataTable } from "@cucumber/cucumber";
 import { expect } from "expect-webdriverio";
 import { browser, driver } from "@wdio/globals";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
-import type { IBackendUser } from "../../helpers/backend-api.contract.js";
+import { RemoteJoiner } from "../../helpers/backend-api.contract.js";
 import { resetBackendUsers, setupBackendUser } from "../../helpers/backend-helpers.js";
 import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
 
 const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
-
-function getProfileIdFromSidebar(targetName: string | undefined): { profileId: string; found: boolean } {
-  const want = (targetName ?? "").trim().toLowerCase();
-  const root = document.querySelector("[data-testid='profiles']");
-  if (!root) return { profileId: "", found: false };
-  const items = root.querySelectorAll("[data-testid^='profiles-list-item-']");
-  for (const item of items) {
-    const nameEl = item.querySelector(".profiles-list-item-name") || item;
-    const currentName = (nameEl?.textContent?.trim() ?? "").toLowerCase();
-    const testId = (item.getAttribute("data-testid") ?? "").trim();
-    const pid = testId.startsWith("profiles-list-item-") ? testId.slice("profiles-list-item-".length) : "";
-    if (currentName !== want) continue;
-    return { profileId: pid, found: true };
-  }
-  return { profileId: "", found: false };
-}
 
 async function pageShowsMessage(msg: string): Promise<boolean> {
   return (await browser.execute((m: string) => {
@@ -73,7 +58,7 @@ async function assertGroupProfileActiveInProfilesList(displayName: string): Prom
   const avatarBtn = $("[data-testid='avatar-button']");
   await avatarBtn.waitForDisplayed({ timeout: 10000 });
   await avatarBtn.click();
-  await browser.pause(1500);
+  await browser.pause(500);
 
   const result = await browser.execute(
     (name: string) => {
@@ -120,16 +105,23 @@ async function assertGroupProfileActiveInProfilesList(displayName: string): Prom
 }
 
 type AliceInitiatorWorld = {
-  aliceInitiatorBob?: IBackendUser;
-  aliceInitiatorBobOobi?: string;
-  aliceInitiatorCharlie?: IBackendUser;
-  aliceInitiatorCharlieOobi?: string;
-  aliceInitiatorGroupId?: string | null;
   aliceInitiatorGroupName?: string;
+  aliceInitiatorGroupId?: string | null;
+  virtualMembers?: Record<
+    string,
+    {
+      instance: RemoteJoiner;
+      oobi: string;
+    }
+  >;
+  aliceSharedOobi?: string;
 };
 
-Given(/^Alice creates a group profile as initiator for "(.*)" with single-sig member id and groupId from Salter in her OOBI$/, async function (groupName: string) {
-  (this as AliceInitiatorWorld).aliceInitiatorGroupName = groupName;
+Given(/^Alice creates a group profile as initiator$/, async function () {
+  const world = this as AliceInitiatorWorld;
+  const groupName = "MultisigGroup";
+  world.aliceInitiatorGroupName = groupName;
+
   await ProfileSetupScreen.selectGroupProfile();
   await ProfileSetupScreen.confirmButton.click();
   await ProfileSetupScreen.waitForGroupSetupScreen();
@@ -137,12 +129,13 @@ Given(/^Alice creates a group profile as initiator for "(.*)" with single-sig me
   await browser.pause(500);
   await ProfileSetupScreen.confirmButton.click();
   await ProfileSetupScreen.waitForProfileSetupScreen();
-  await ProfileSetupScreen.enterUsername("GroupUser123");
+  await ProfileSetupScreen.enterUsername("Alice");
   await browser.pause(500);
   await ProfileSetupScreen.confirmButton.click();
   await ProfileSetupScreen.waitForWelcomeScreen();
   await expect(ProfileSetupScreen.continueButton).toBeDisplayed();
   await ProfileSetupScreen.continueButton.click();
+
   await browser.waitUntil(
     async () => {
       const url = await browser.getUrl();
@@ -151,35 +144,11 @@ Given(/^Alice creates a group profile as initiator for "(.*)" with single-sig me
     { timeout: 15000, timeoutMsg: "Did not navigate to group-profile-setup or Homepage after Welcome" }
   );
   await browser.pause(2000);
-  let currentUrl = await browser.getUrl();
-  if (!currentUrl.includes("group-profile-setup")) {
-    const avatarButton = $("[data-testid='avatar-button']");
-    await avatarButton.waitForDisplayed({ timeout: 10000 });
-    await avatarButton.click();
-    await browser.pause(1000);
-    const profilesModal = $("[data-testid='profiles']");
-    await profilesModal.waitForDisplayed({ timeout: 10000 });
-    await browser.pause(1500);
-    const sidebarResult = (await browser.execute(getProfileIdFromSidebar, groupName)) as { profileId: string; found: boolean };
-    if (!sidebarResult.found || !sidebarResult.profileId) {
-      throw new Error(`Could not find group "${groupName}" in Sidebar`);
-    }
-    const closeBtn = $("[data-testid='profiles'] [data-testid='close-button']");
-    if (await closeBtn.isDisplayed().catch(() => false)) await closeBtn.click();
-    await browser.pause(500);
-    const baseWithoutHash = (await browser.getUrl()).replace(/#.*$/, "");
-    await browser.url(`${baseWithoutHash}#/group-profile-setup/${sidebarResult.profileId}`);
-    await browser.pause(2000);
-  }
-});
 
-Given(/^Bob has resolved Alice's OOBI and created his member id with the same groupId copy-pasted into his OOBI$/, async function () {
-  const bob = await setupBackendUser("Bob");
-  (this as AliceInitiatorWorld).aliceInitiatorBob = bob;
+  // Capture Alice's OOBI for members
   const provideTab = $("[data-testid='share-oobi-segment-button']");
   await provideTab.waitForDisplayed({ timeout: 10000 });
   await provideTab.click();
-  await browser.pause(2000);
   const installShareCapture = `
     (function() {
       window.__lastSharedOobi = undefined;
@@ -194,83 +163,94 @@ Given(/^Bob has resolved Alice's OOBI and created his member id with the same gr
     })();
   `;
   await browser.execute(installShareCapture);
+
   const shareButton = $(".share-profile-oobi .share-button");
   await shareButton.waitForDisplayed({ timeout: 8000 });
-  await shareButton.scrollIntoView?.().catch(() => {});
+  await shareButton.scrollIntoView?.().catch(() => { });
   await shareButton.click();
-  await browser.pause(2500);
   const aliceOobiUrl = (await browser.execute(() => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi)) as string | undefined;
+  if (!aliceOobiUrl) throw new Error("Could not capture Alice's OOBI");
+  world.aliceSharedOobi = aliceOobiUrl;
+
+  const aliceGroupId = new URL(aliceOobiUrl).searchParams.get("groupId");
+  world.aliceInitiatorGroupId = aliceGroupId;
   await driver.pressKeyCode(4);
   await browser.pause(500);
-  if (!aliceOobiUrl?.startsWith("http") || !aliceOobiUrl.includes("/oobi/")) {
-    throw new Error(
-      "Could not get Alice's OOBI from Share (Provide) tab. Share button was used; captured URL missing or invalid. The OOBI URL contains the groupId we need for Bob's OOBI."
-    );
-  }
-  const aliceOobi = new URL(aliceOobiUrl);
-  const aliceGroupId = aliceOobi.searchParams.get("groupId");
-  if (!aliceGroupId) {
-    throw new Error(
-      "Alice's OOBI URL from Share tab did not contain a groupId query param. App should add groupId (Salter) to the OOBI URL/QR."
-    );
-  }
-  (this as AliceInitiatorWorld).aliceInitiatorGroupId = aliceGroupId;
-  let bobOobiForApp = await bob.getOobi({ alias: "Bob", groupId: aliceGroupId, groupName: "Alice" });
-  const hostUrls = getKeriaUrlsForTestRunner();
-  const bobOobiUrl = new URL(bobOobiForApp);
-  bobOobiUrl.hostname = new URL(hostUrls.connectUrl).hostname;
-  bobOobiForApp = bobOobiUrl.toString();
-  (this as AliceInitiatorWorld).aliceInitiatorBobOobi = bobOobiForApp;
 });
 
-Given(/^Charlie has resolved Alice's OOBI and created his member id with the same groupId copy-pasted into his OOBI$/, async function () {
-  const world = this as AliceInitiatorWorld;
-  const aliceGroupId = world.aliceInitiatorGroupId;
-  if (!aliceGroupId) {
-    throw new Error("Run Bob's step first so aliceInitiatorGroupId is set from Alice's OOBI.");
-  }
-  const charlie = await setupBackendUser("Charlie");
-  world.aliceInitiatorCharlie = charlie;
-  const groupName = world.aliceInitiatorGroupName ?? "Alice";
-  let charlieOobiForApp = await charlie.getOobi({ alias: "Charlie", groupId: aliceGroupId, groupName });
-  const hostUrls = getKeriaUrlsForTestRunner();
-  const charlieOobiUrl = new URL(charlieOobiForApp);
-  charlieOobiUrl.hostname = new URL(hostUrls.connectUrl).hostname;
-  charlieOobiForApp = charlieOobiUrl.toString();
-  world.aliceInitiatorCharlieOobi = charlieOobiForApp;
-});
+Given(
+  /^the following members resolve each others' OOBIs and create member ids:$/,
+  async function (dataTable: DataTable) {
+    const world = this as AliceInitiatorWorld;
+    if (!world.aliceSharedOobi || !world.aliceInitiatorGroupId) {
+      throw new Error("Alice OOBI must be captured first.");
+    }
 
-When(/^Alice pastes Charlie's OOBI on the Scan tab$/, async function () {
-  const world = this as AliceInitiatorWorld;
-  const charlieOobiForApp = world.aliceInitiatorCharlieOobi;
-  if (!charlieOobiForApp) {
-    throw new Error("Run the previous step first: Charlie has resolved Alice's OOBI and created his member id.");
+    const members = dataTable.hashes().flatMap(r => r.name.split(',').map(name => name.trim()));
+    console.log(members)
+    const hostUrls = getKeriaUrlsForTestRunner();
+    world.virtualMembers = {};
+
+    // Step 1: Create all virtual wallets
+    for (const name of members) {
+      const wallet = await setupBackendUser(name);
+      await wallet.generateOobi();
+      world.virtualMembers[name] = { instance: wallet, oobi: "" };
+    }
+
+    // Step 2: Resolve Alice for all members and generate their OOBIs
+    for (const [name, { instance }] of Object.entries(world.virtualMembers)) {
+      if (!instance.oobi) throw new Error("Could not generate OOBI for member");
+      await instance.resolveOobi(world.aliceSharedOobi!, "Alice");
+      const url = new URL(instance.oobi);
+      url.hostname = new URL(hostUrls.connectUrl).hostname;
+      world.virtualMembers[name].oobi = url.toString();
+    }
+
+    // Step 3: Resolve each others' OOBIs
+    const memberEntries = Object.entries(world.virtualMembers);
+    for (let i = 0; i < memberEntries.length; i++) {
+      for (let j = 0; j < memberEntries.length; j++) {
+        if (i === j) continue;
+        await memberEntries[i][1].instance.resolveOobi(memberEntries[j][1].oobi, memberEntries[j][0]);
+      }
+    }
   }
+);
+
+When(/^Alice pastes all member OOBIs on the Scan tab$/, async function () {
+  const world = this as AliceInitiatorWorld;
+  if (!world.virtualMembers) throw new Error("No virtual members found");
+
   const scanTab = $("[data-testid='scan-profile-segment-button']");
-  await scanTab.waitForDisplayed({ timeout: 10000 });
-  await scanTab.click();
-  await browser.pause(1500);
-  await pasteOobiAndConfirm(charlieOobiForApp);
-  await browser.pause(2000);
-});
 
-When(/^Alice pastes Bob's OOBI on the Scan tab$/, async function () {
-  const world = this as AliceInitiatorWorld;
-  const bobOobiForApp = world.aliceInitiatorBobOobi;
-  if (!bobOobiForApp) throw new Error("Run the previous step first: Bob has resolved Alice's OOBI and created his member id.");
-  const scanTab = $("[data-testid='scan-profile-segment-button']");
-  await scanTab.waitForDisplayed({ timeout: 10000 });
-  await scanTab.click();
-  await browser.pause(1500);
-  await pasteOobiAndConfirm(bobOobiForApp);
-  await browser.pause(2000);
+  for (const [name, member] of Object.entries(world.virtualMembers)) {
+    await scanTab.waitForDisplayed({ timeout: 10000 });
+    await scanTab.click();
+    await browser.pause(200);
+
+    if (!member.oobi) throw new Error(`OOBI missing for member ${name}`);
+
+    const url = new URL(member.oobi);
+
+    // Add required query params
+    url.searchParams.set("groupId", world.aliceInitiatorGroupId!);
+    url.searchParams.set("groupName", world.aliceInitiatorGroupName ?? "MultisigGroup");
+    url.searchParams.set("name", name);
+
+    const oobiForApp = url.toString();
+
+    await pasteOobiAndConfirm(oobiForApp);
+    await browser.pause(200);
+  }
+
 });
 
 When(/^Alice initiates the group identifier$/, async function () {
   const provideTab = $("[data-testid='share-oobi-segment-button']");
   await provideTab.waitForDisplayed({ timeout: 10000 });
   await provideTab.click();
-  await browser.pause(1500);
+  await browser.pause(500);
   const initiateBtn = $("[data-testid='primary-button-setup-group-profile']");
   await initiateBtn.waitForDisplayed({ timeout: 10000 });
   await initiateBtn.click();
@@ -278,13 +258,13 @@ When(/^Alice initiates the group identifier$/, async function () {
   const alertConfirmBtn = $("[data-testid='alert-confirm-init-group-confirm-button']");
   await alertConfirmBtn.waitForDisplayed({ timeout: 5000 });
   await alertConfirmBtn.click();
-  await browser.pause(2000);
+  await browser.pause(500);
 
   await browser.waitUntil(
     async () => (await $("[data-testid='init-group-footer']").isDisplayed().catch(() => false)) || (await $("[data-testid='signer-alert-card-block']").isDisplayed().catch(() => false)),
     { timeout: 15000, timeoutMsg: "Confirm (InitializeGroup) screen did not load" }
   );
-  await browser.pause(1000);
+  await browser.pause(500);
 });
 
 When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async function (requiredStr: string, recoveryStr: string) {
@@ -296,13 +276,13 @@ When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async func
   const signerAlertBtn = $("[data-testid='signer-alert-card-block'] .secondary-button");
   const signerAlertVisible = await signerAlertBtn.isDisplayed().catch(() => false);
   if (signerAlertVisible) {
-    await signerAlertBtn.scrollIntoView?.().catch(() => {});
+    await signerAlertBtn.scrollIntoView?.().catch(() => { });
     await browser.pause(300);
     await signerAlertBtn.click();
   } else {
     const setSignersFallback = $("[data-testid='signer-alert-card-block'] button");
     if (await setSignersFallback.isDisplayed().catch(() => false)) {
-      await setSignersFallback.scrollIntoView?.().catch(() => {});
+      await setSignersFallback.scrollIntoView?.().catch(() => { });
       await browser.pause(300);
       await setSignersFallback.click();
     } else {
@@ -335,22 +315,19 @@ When(/^Alice sends the group requests$/, async function () {
   await browser.pause(3000);
 });
 
-When(/^Bob accepts the group invitation$/, async function () {
+When(/^all members accept the group invitation$/, async function () {
   const world = this as AliceInitiatorWorld;
-  const bob = world.aliceInitiatorBob;
-  if (!bob) {
-    throw new Error("Missing aliceInitiatorBob. Run the Given step: Bob has resolved Alice's OOBI and created his member id.");
-  }
-  await bob.acceptGroupInvitation(60000);
-});
+  if (!world.virtualMembers) throw new Error("No virtual members to accept invitations");
 
-When(/^Charlie accepts the group invitation$/, async function () {
-  const world = this as AliceInitiatorWorld;
-  const charlie = world.aliceInitiatorCharlie;
-  if (!charlie) {
-    throw new Error("Missing aliceInitiatorCharlie. Run the Given step: Charlie has resolved Alice's OOBI and created his member id.");
+  for (const member of Object.values(world.virtualMembers)) {
+    await member.instance.acceptGroupInvitation(60000);
   }
-  await charlie.acceptGroupInvitation(60000);
+  for (const member of Object.values(world.virtualMembers)) {
+    await member.instance.waitPendingOperations();
+  }
+  for (const member of Object.values(world.virtualMembers)) {
+    await member.instance.authorizeGroupAgents("MultisigGroup");
+  }
 });
 
 Then(/^the group status becomes "Active" when the group is ready$/, async function () {
