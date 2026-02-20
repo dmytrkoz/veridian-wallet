@@ -207,20 +207,25 @@ export const config: Options.Testrunner = {
     const { driver, browser } = await import("@wdio/globals");
     const appPackage = "org.cardanofoundation.idw";
 
-    // Dump wallet (device) logcat so CI can upload it (file is in workspace the job sees)
+    // Dump wallet-related logcat only (filter out Appium/screenshot/system noise)
     try {
       const reportsDir = path.join(process.cwd(), "tests", ".reports");
       if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
       const logPath = path.join(reportsDir, "wallet-logcat.txt");
       const logs = await (driver as any).getLogs?.("logcat");
       if (Array.isArray(logs) && logs.length > 0) {
-        const lines = logs
-          .slice(-8000)
-          .map((e: { timestamp?: number; level?: string; message?: string }) =>
-            [e.timestamp, e.level, e.message].filter(Boolean).join(" ")
-          );
-        fs.writeFileSync(logPath, lines.join("\n"), "utf8");
-        console.log(`[WDIO] Wallet logcat written: ${logPath} (${lines.length} lines)`);
+        const WALLET_TAGS = /ReactNative|ReactNativeJS|Capacitor|Console|chromium|cr_|Signify|Keria|agent|org\.cardanofoundation|idw|Ionic|WebView|cdv|Cordova/i;
+        const NOISE_TAGS = /appium|uiautomator|SurfaceFlinger|goldfish|MjpegScreenshot|TakeScreenshotException|Empty screenshot/i;
+        const toLine = (e: { timestamp?: number; level?: string; message?: string }) =>
+          [e.timestamp, e.level, e.message].filter(Boolean).join(" ");
+        const allLines = logs.slice(-12000).map(toLine);
+        const walletLines = allLines.filter((line: string) => {
+          if (NOISE_TAGS.test(line)) return false;
+          return WALLET_TAGS.test(line);
+        });
+        const out = walletLines.slice(-8000);
+        fs.writeFileSync(logPath, out.join("\n"), "utf8");
+        console.log(`[WDIO] Wallet logcat written: ${logPath} (${out.length} wallet-related lines, ${allLines.length} total)`);
       }
     } catch (e) {
       console.warn("[WDIO] Could not capture logcat:", (e as Error).message);
