@@ -143,7 +143,29 @@ Then(/^Confirm button is enabled$/, async function () {
 
 When(/^user taps Confirm button on Profile setup screen$/, async function () {
   await expect(ProfileSetupScreen.confirmButton).toBeDisplayed();
+  const wasEnabled = await ProfileSetupScreen.isConfirmButtonEnabled();
+  if (!wasEnabled) {
+    throw new Error("Confirm button is disabled; cannot click. Ensure username is valid and button is enabled.");
+  }
   await ProfileSetupScreen.confirmButton.click();
+  console.log("[E2E] Confirm button on Profile setup was clicked");
+  // Short pause then check if we're still on profile setup or if any error appeared
+  await browser.pause(2000);
+  const stillOnProfileSetup = await ProfileSetupScreen.usernameInput.isDisplayed().catch(() => false);
+  if (stillOnProfileSetup) {
+    const errorText = await browser
+      .execute(() => {
+        const el = document.querySelectorAll(
+          '[data-testid*="error"], [class*="error"], [class*="Error"], ion-toast .toast-message, [class*="toast"]'
+        );
+        return Array.from(el).map((n) => n.textContent?.trim()).filter(Boolean).join(" | ");
+      })
+      .catch(() => "");
+    const url = await browser.getUrl().catch(() => "");
+    const msg = `Still on Profile setup 2s after Confirm. URL: ${url}. ${errorText ? `Errors/toast: ${errorText}` : "No visible error text."}`;
+    console.warn("[E2E]", msg);
+    allure.addAttachment("Profile setup: state 2s after Confirm", msg, "text/plain");
+  }
   // Allow time for profile creation to start before waiting for welcome screen (CI can be slow)
   await browser.pause(5000);
   try {

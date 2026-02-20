@@ -207,6 +207,25 @@ export const config: Options.Testrunner = {
     const { driver, browser } = await import("@wdio/globals");
     const appPackage = "org.cardanofoundation.idw";
 
+    // Dump wallet (device) logcat so CI can upload it (file is in workspace the job sees)
+    try {
+      const reportsDir = path.join(process.cwd(), "tests", ".reports");
+      if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+      const logPath = path.join(reportsDir, "wallet-logcat.txt");
+      const logs = await (driver as any).getLogs?.("logcat");
+      if (Array.isArray(logs) && logs.length > 0) {
+        const lines = logs
+          .slice(-8000)
+          .map((e: { timestamp?: number; level?: string; message?: string }) =>
+            [e.timestamp, e.level, e.message].filter(Boolean).join(" ")
+          );
+        fs.writeFileSync(logPath, lines.join("\n"), "utf8");
+        console.log(`[WDIO] Wallet logcat written: ${logPath} (${lines.length} lines)`);
+      }
+    } catch (e) {
+      console.warn("[WDIO] Could not capture logcat:", (e as Error).message);
+    }
+
     if (result.passed === false) {
       try {
         const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
