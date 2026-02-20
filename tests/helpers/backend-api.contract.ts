@@ -13,6 +13,7 @@ import {
   Siger,
   SignifyClient,
   Tier,
+  Operation,
 } from "signify-ts";
 
 export interface KeriaConfig {
@@ -179,7 +180,6 @@ export class VirtualWallet {
     this.oobi = result.oobis[0];
   }
 
-
   async getOobi(options?: GetOobiOptions): Promise<string> {
     const role = options?.role || "agent";
     const result = await this.client.oobis().get(this.aidName, role);
@@ -225,11 +225,37 @@ export class VirtualWallet {
 }
 
 export class RemoteJoiner extends VirtualWallet {
-  async acceptGroupInvitation(timeoutMs: number = 30000, groupName: string = "MultisigGroup"): Promise<void> {
+  private pendingOperations: Operation[] = [];
+
+  public pushOperation(operation: Operation): void {
+    this.pendingOperations.push(operation);
+  }
+
+  public pullByType(type?: string): Operation[] {
+    const matches: Operation[] = [];
+
+    this.pendingOperations = this.pendingOperations.filter(op => {
+      const isMatch = !type || op.name.startsWith(`${type}.`);
+      if (isMatch) matches.push(op);
+      return !isMatch;
+    });
+
+    return matches;
+  }
+
+  public async waitPendingOperations(type?: string) {
+    console.log(`[${this.alias}] Waiting for pending operations...`);
+    const ops = this.pullByType(type);
+
+    for (const op of ops) {
+      await this.waitOperation(op);
+    }
+  }
+
+  async acceptGroupInvitation(timeoutMs: number = 30000, groupName: string = "MultisigGroup") {
     console.log(`[${this.alias}] Waiting for group invitation (multisig/icp)...`);
 
     const notifications = await this.waitForNotification("/multisig/icp", timeoutMs);
-    console.log(notifications)
     const icpMsg = await this.client
       .groups()
       .getRequest(notifications[0].a.d)
@@ -275,8 +301,7 @@ export class RemoteJoiner extends VirtualWallet {
     console.log(`[${this.alias}] Joining group. Acknowledging to: ${recipients.join(', ')}`);
     await group.send(recipients);
 
-    await this.waitOperation(group.operation);
-    console.log(`[${this.alias}] Successfully joined group.`);
+    this.pushOperation(group.operation)
   }
 
   async authorizeGroupAgents(groupName: string): Promise<void> {
@@ -295,7 +320,7 @@ export class RemoteJoiner extends VirtualWallet {
       .map((m: any) => m.aid)
       .filter((aid: string) => aid !== myPrefix);
 
-    console.log(`[${this.alias}] Found ${signingMembers.length} members. Starting authorization loop.`);
+    console.log(`[${this.alias}] Found ${signingMembers.length} members. Starting authorization.`);
 
     for (const member of signingMembers) {
       let agentEid: string | undefined;
@@ -385,10 +410,10 @@ class Group {
   ) { }
 
   async create(params: {
-    isith?: number | string,
-    nsith?: number | string,
-    toad?: number,
-    wits?: string[],
+    isith: number | string,
+    nsith: number | string,
+    toad: number,
+    wits: string[],
     rstates?: any[],
     delpre?: string
   }) {
@@ -397,9 +422,9 @@ class Group {
     const result = await this.client.identifiers().create(this.groupAlias, {
       algo: Algos.group,
       mhab,
-      isith: params.isith || 2,
-      nsith: params.nsith || 2,
-      toad: params.toad || 2,
+      isith: params.isith,
+      nsith: params.nsith,
+      toad: params.toad,
       wits: params.wits,
       states: this.memberStates,
       rstates: params.rstates || this.memberStates,
