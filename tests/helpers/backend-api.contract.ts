@@ -208,7 +208,7 @@ export class VirtualWallet {
     );
   }
 
-  protected async waitForNotification(route: string, timeoutMs: number, interval = 500) {
+  async waitForNotification(route: string, timeoutMs: number, interval = 500) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       try {
@@ -360,6 +360,23 @@ export class RemoteJoiner extends VirtualWallet {
 
     console.log(`[${this.alias}] Finished Agent Authorization Loop.`);
   }
+
+  async processIncomingGroupAgentsEndorcements(groupName: string) {
+    const membersResult = await this.client.identifiers().members(groupName);
+    const signingMembers = membersResult.signing;
+    const myPrefix = await this.getAid();
+    const recipients = signingMembers
+      .map((m: any) => m.aid)
+      .filter((aid: string) => aid !== myPrefix);
+
+    const notifications = await this.waitForNotification("/multisig/rpy", 60000);
+    for (const notification of notifications) {
+      const request = await this.client.groups().getRequest(notification.a.d);
+      const bankGroupB_Role = new Role(this, groupName, true);
+      await bankGroupB_Role.acknowledge(request[0].exn);
+      await bankGroupB_Role.send(recipients);
+    }
+  }
 }
 
 export class RemoteInitiator extends VirtualWallet {
@@ -510,6 +527,7 @@ export class Role {
   }
 
   async send(recipients: string[]) {
+    console.log(`${this.user.aidName} sending endRole to ${recipients.join(', ')}`)
     const ghab = await this.user.client.identifiers().get(this.alias);
     const seal = [
       'SealEvent',
@@ -542,6 +560,7 @@ export class Role {
   }
 
   async acknowledge(notification: any) {
+    console.log(`${this.user.aidName} akcnoledge endRole`)
     this.dt = notification.e.rpy.dt;
 
     const result = await this.user.client.identifiers().addEndRole(
@@ -550,7 +569,6 @@ export class Role {
       notification.e.rpy.a.eid,
       notification.e.rpy.dt
     );
-
     const op = await result.op();
     this.addResult = result;
     this.addOperation = op;

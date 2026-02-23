@@ -325,8 +325,16 @@ When(/^all members accept the group invitation$/, async function () {
   for (const member of Object.values(world.virtualMembers)) {
     await member.instance.waitPendingOperations();
   }
+  // propose their endorsement before processing incoming ones.
   for (const member of Object.values(world.virtualMembers)) {
     await member.instance.authorizeGroupAgents("MultisigGroup");
+  }
+  // every member processes all incoming endorsements and anchors them locally.
+  for (const member of Object.values(world.virtualMembers)) {
+    await member.instance.processIncomingGroupAgentsEndorcements("MultisigGroup");
+  }
+  for (const member of Object.values(world.virtualMembers)) {
+    await member.instance.waitPendingOperations();
   }
 });
 
