@@ -60,24 +60,28 @@ export type SetupBackendUser = (alias: string) => Promise<IBackendUser>;
 
 // --- Remote initiator (backend proposes group, app joins) ---
 
-export interface EnsureJoinerOptions {
-  seedMnemonic?: string;
-}
-
 export interface CreateGroupOptions {
-  wits?: string[];
-  isith?: number;
-  nsith?: number;
+  isith?: number | string;
+  nsith?: number | string;
   toad?: number;
-  joinerAid?: string;
+  wits?: string[];
 }
 
-/** Backend that can set up joiner, create a group, and propose it to the app. */
+/** Backend that can set up a remote initiator, create a group, and propose it to all members. */
 export interface IRemoteInitiator {
-  ensureJoinerInKeria(joinerAid: string, options?: EnsureJoinerOptions): Promise<void>;
-  createGroup(groupName: string, options?: CreateGroupOptions): Promise<{ groupId: string }>;
-  proposeGroupToJoiner(groupId: string, joinerAid: string): Promise<void>;
-  waitForOperation(operationId: string, timeoutMs?: number): Promise<void>;
+  oobi?: string;
+  getOobi(options?: GetOobiOptions): Promise<string>;
+  getAid(): Promise<string>;
+  generateOobi(role?: string): Promise<void>;
+  resolveOobi(oobi: string, alias: string): Promise<void>;
+  createAndProposeGroup(
+    groupName: string,
+    joinerAids: string[],
+    options?: CreateGroupOptions
+  ): Promise<{ groupId: string }>;
+  waitPendingOperations(type?: string): Promise<void>;
+  authorizeGroupAgents(groupName: string): Promise<void>;
+  processIncomingGroupAgentsEndorcements(groupName: string): Promise<void>;
 }
 
 /** One-time setup: connect to KERIA and create the initiator identifier. */
@@ -379,40 +383,51 @@ export class RemoteJoiner extends VirtualWallet {
   }
 }
 
-export class RemoteInitiator extends VirtualWallet {
+export class RemoteInitiator extends RemoteJoiner {
 
-  // async createAndProposeGroup(groupName: string, options: CreateGroupOptions): Promise<string> {
-  //   const myAid = await this.getAid();
+  /**
+   * Creates a multisig group with all provided member AIDs (joiner AIDs, excluding initiator)
+   * and proposes it to all members via /multisig/icp exchange.
+   *
+   * @param groupName  - Alias for the new group identifier
+   * @param joinerAids - AIDs of all non-initiator members (app joiner + extra virtual members)
+   * @param options    - isith (signing threshold), nsith (next key threshold), toad, wits
+   * @returns groupId  - The prefix of the newly created multisig identifier
+   */
+  async createAndProposeGroup(
+    groupName: string,
+    joinerAids: string[],
+    options: { isith?: number | string; nsith?: number | string; toad?: number; wits?: string[] } = {}
+  ): Promise<{ groupId: string }> {
+    const myAid = await this.getAid();
+    const allMemberIds = [myAid, ...joinerAids];
 
-  //   const allMemberIds = [myAid, ...options.members];
-  //   const uniqueIds = Array.from(new Set(allMemberIds));
+    console.log(`[${this.alias}] Fetching key states for all members: ${allMemberIds.join(", ")}`);
+    const memberStates = await Promise.all(
+      allMemberIds.map((id) => this.client.keyStates().get(id).then((s: any) => s[0]))
+    );
 
-  //   const memberStates = [];
-  //   for (const memberId of uniqueIds) {
-  //     const state = await this.client.keyStates().get(memberId);
-  //     if (!state || state.length === 0) {
-  //       throw new Error(`State not found for member ${memberId}. Call resolveOobi first.`);
-  //     }
-  //     memberStates.push(state[0]);
-  //   }
+    const group = new Group(this.client, this.aidName, groupName, memberStates);
 
-  //   const group = new Group(this.client, this.aidName, groupName, memberStates);
+    await group.create({
+      isith: options.isith ?? 1,
+      nsith: options.nsith ?? 1,
+      toad: options.toad ?? 0,
+      wits: options.wits ?? [],
+      rstates: memberStates,
+    });
 
-  //   await group.create({
-  //     isith: options.isith || 2,
-  //     nsith: options.nsith || 2,
-  //     toad: options.toad || 2,
-  //     wits: options.wits || TEST_WITNESSES
-  //   });
+    const groupId = await group.getPrefix();
+    console.log(`[${this.alias}] Created group ${groupName} with id ${groupId}. Proposing to: ${joinerAids.join(", ")}`);
 
-  //   const recipients = options.members;
-  //   console.log(`[${this.alias}] Proposing group ${groupName} to ${recipients.join(', ')}`);
-  //   await group.send(recipients);
+    if (joinerAids.length > 0) {
+      await group.send(joinerAids);
+    }
 
-  //   await this.waitOperation(group.operation);
+    this.pushOperation(group.operation);
 
-  //   return group.getPrefix();
-  // }
+    return { groupId };
+  }
 }
 
 class Group {
