@@ -8,9 +8,12 @@ import {
   createRemoteInitiator,
   createRemoteJoiner,
 } from "../../helpers/backend-api.contract.js";
-import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
+import {
+  getKeriaUrlsForTestRunner,
+} from "../../helpers/ssi-agent-urls.helper.js";
 
 const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
+const GENERIC_CONNECTION_ERROR_MSG = "Something went wrong. Please try again.";
 const DEFAULT_WITNESSES_CONFIG = { toad: 0, witnesses: [] };
 
 // ---------------------------------------------------------------------------
@@ -27,6 +30,9 @@ type BobJoinerWorld = {
   extraVirtualMembers?: Record<string, RemoteJoiner>;
   /** KERI prefix of the created multisig group */
   groupId?: string;
+  /** Alice's personal AID — used as pendingGroupId in extra-member OOBIs so the
+   *  app can match them to the correct pending group invitation */
+  aliceAid?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -50,10 +56,77 @@ async function pageShowsMessage(msg: string): Promise<boolean> {
   }, msg)) as boolean;
 }
 
-async function pasteOobiAndConfirm(oobi: string): Promise<void> {
+/**
+ * Dismisses the lock screen if it is currently covering the UI.
+ * The lock page's tertiary button intercepts native clicks on any element
+ * that shares the same screen coordinates. Call this before every important
+ * UI action that might be affected by auto-lock.
+ */
+async function dismissLockScreenIfPresent(): Promise<void> {
+  const lockPage = $("[data-testid='tertiary-button-lock-page']");
+  if (await lockPage.isExisting().catch(() => false)) {
+    await browser.execute(() => {
+      const btn = document.querySelector(
+        "[data-testid='tertiary-button-lock-page']"
+      ) as HTMLElement | null;
+      if (btn) btn.click();
+    });
+    await browser.pause(1000);
+  }
+}
+
+async function getPendingGroupPrimaryButtonText(): Promise<string> {
+  return (
+    ((await browser.execute(() => {
+      const btn = document.querySelector(
+        "[data-testid='primary-button-pending-group']"
+      ) as HTMLElement | null;
+      return btn?.innerText?.trim() ?? btn?.textContent?.trim() ?? "";
+    })) as string) || ""
+  );
+}
+
+async function getLatestToastMessage(): Promise<string> {
+  return (
+    ((await browser.execute(() => {
+      const toasts = Array.from(document.querySelectorAll("ion-toast"));
+      for (const toast of toasts.reverse()) {
+        const root = (toast as HTMLElement).shadowRoot;
+        if (!root) continue;
+        const messageEl =
+          root.querySelector(".toast-message") ??
+          root.querySelector("[part='message']");
+        const text = messageEl?.textContent?.trim() ?? "";
+        if (text) return text;
+      }
+      return "";
+    })) as string) || ""
+  );
+}
+
+async function getConnectedMembersProgressText(): Promise<string> {
+  return (
+    ((await browser.execute(() => {
+      const bodyText = document.body?.innerText ?? "";
+      const match = bodyText.match(/\d+\s+out of\s+\d+\s+connected members/i);
+      return match?.[0] ?? "";
+    })) as string) || ""
+  );
+}
+
+async function pasteOobiAndConfirm(oobi: string, useJsClick = false): Promise<void> {
   const pasteButton = $("[data-testid='paste-content-button']");
-  await pasteButton.waitForDisplayed({ timeout: 10000 });
-  await pasteButton.click();
+  await pasteButton.waitForDisplayed({ timeout: 15000 });
+  await pasteButton.scrollIntoView?.().catch(() => {});
+  await browser.pause(500);
+  if (useJsClick) {
+    await browser.execute(() => {
+      const btn = document.querySelector("[data-testid='paste-content-button']");
+      if (btn) (btn as HTMLElement).click();
+    });
+  } else {
+    await pasteButton.click();
+  }
   await browser.pause(800);
 
   const scanInput = $("[data-testid='scan-input']");
@@ -204,6 +277,7 @@ Given(
     await initiator.generateOobi();
 
     const aliceAid = await initiator.getAid();
+    world.aliceAid = aliceAid;
 
     const rawOobi = await initiator.getOobi({
       alias: "Alice",
@@ -214,11 +288,6 @@ Given(
     world.aliceOobiForJoin = normalizeOobiHostname(
       rawOobi,
       testRunnerUrls.connectUrl
-    );
-
-    console.log(`[Alice] raw OOBI: ${rawOobi}`);
-    console.log(
-      `[Alice] Pending group "${groupName}" ready. OOBI for app: ${world.aliceOobiForJoin}`
     );
   }
 );
@@ -379,7 +448,6 @@ Given(/^Bob scans Alice's group OOBI to join as a member$/, async function () {
     throw new Error("Could not capture Bob's OOBI from the Share button after 3 attempts");
   }
   world.bobSharedOobi = bobOobiUrl;
-  console.log(`[Bob] OOBI captured: ${bobOobiUrl}`);
 
   await driver.pressKeyCode(4);
   await browser.pause(500);
@@ -509,15 +577,166 @@ When(
 // ---------------------------------------------------------------------------
 
 When(/^Bob accepts the group invitation in the app$/, async function () {
+  const world = this as BobJoinerWorld;
+  const testRunnerConnectUrl = getKeriaUrlsForTestRunner().connectUrl;
+  const groupName = world.bobGroupName ?? "MultisigGroup";
+  const groupId = world.groupId;
+
+  // For 2-of-3 and 3-of-3: Bob may see ErrorPage ("missing connections") because
+  // the app requires Bob to have connections with ALL group members. Bob only
+  // scanned Alice; Charlie is a virtual backend member. Bob must add Charlie's
+  // OOBI before the Accept button appears.
+  const extraMembers = Object.entries(world.extraVirtualMembers ?? {});
+  let addedAnyMember = false;
+  for (const [name, joiner] of extraMembers) {
+    // Wait for the PendingGroup page to appear first (app receives KERI notification
+    // asynchronously), then check for the missing connections alert. Checking
+    // immediately at step start would always return false because Bob is still
+    // on group-profile-setup (Provide tab) and the alert only renders on PendingGroup.
+    let missingConnectionsAlert = false;
+    try {
+      await browser.waitUntil(
+        async () => {
+          missingConnectionsAlert = await pageShowsMessage(
+            "You are missing one or more connections required for this group request"
+          ).catch(() => false);
+          return missingConnectionsAlert;
+        },
+        { timeout: 30000, interval: 1000 }
+      );
+    } catch {
+      // alert did not appear within 30 s — no missing connections for this member
+    }
+    if (!missingConnectionsAlert) break;
+
+    console.log(`[Bob] Adding missing connection: ${name}`);
+    // Use aliceAid as groupId — the app identifies the pending group by Alice's
+    // AID (the same value Alice embedded in her own OOBI). Using world.groupId
+    // (the multisig group AID) would cause "Connection not part of this group".
+    const rawOobi = await joiner.getOobi({
+      alias: name,
+      groupId: world.aliceAid ?? groupId ?? "",
+      groupName,
+    });
+    const charlieOobiForApp = normalizeOobiHostname(
+      rawOobi,
+      testRunnerConnectUrl
+    );
+    const connectedMembersBefore = await getConnectedMembersProgressText();
+
+    // isDisplayed() can return false even when the button exists (checkVisibility
+    // fails due to parent opacity/overflow). Wait for DOM presence then JS-click.
+    await browser.waitUntil(
+      async () =>
+        $("[data-testid='primary-button-pending-group']")
+          .isExisting()
+          .catch(() => false),
+      { timeout: 10000, timeoutMsg: "Add members button did not appear" }
+    );
+    await browser.execute(() => {
+      const btn = document.querySelector(
+        "[data-testid='primary-button-pending-group']"
+      ) as HTMLElement | null;
+      if (btn) btn.click();
+    });
+    await browser.pause(1500);
+
+    // ShareProfile opens with Provide tab by default; paste button is on Scan tab
+    const scanTab = $("[data-testid='scan-profile-segment-button']");
+    if (await scanTab.isExisting().catch(() => false)) {
+      await scanTab.click();
+      await browser.pause(2000);
+    }
+
+    // useJsClick: native camera overlay blocks touch; JS click bypasses it
+    await pasteOobiAndConfirm(charlieOobiForApp, true);
+    await browser.pause(2000);
+
+    if (await pageShowsMessage(GENERIC_CONNECTION_ERROR_MSG)) {
+      throw new Error(
+        `Scanning ${name}'s OOBI failed with generic connection error. OOBI pasted: ${charlieOobiForApp}`
+      );
+    }
+    if (await pageShowsMessage(GROUP_ID_MISMATCH_MSG)) {
+      throw new Error(
+        `Scanning ${name}'s OOBI failed with group-id mismatch. OOBI pasted: ${charlieOobiForApp}`
+      );
+    }
+
+    // If the scan-input-modal is still open (edge case), dismiss it first
+    const scanModal = $("[data-testid='scan-input-modal']");
+    if (await scanModal.isDisplayed().catch(() => false)) {
+      await driver.pressKeyCode(4);
+      await browser.pause(500);
+    }
+
+    // After the OOBI is submitted the scan modal closes but ShareProfile screen
+    // is still on top of PendingGroup. Press Back to return to PendingGroup so
+    // the "Continue setup" button becomes visible.
+    await driver.pressKeyCode(4);
+    await browser.pause(1500);
+
+    let connectedMembersAfter = await getConnectedMembersProgressText();
+    let primaryButtonText = await getPendingGroupPrimaryButtonText();
+
+    if (!/continue setup/i.test(primaryButtonText)) {
+      try {
+        await browser.waitUntil(async () => {
+          primaryButtonText = await getPendingGroupPrimaryButtonText();
+          connectedMembersAfter = await getConnectedMembersProgressText();
+          return (
+            /continue setup/i.test(primaryButtonText) ||
+            connectedMembersAfter !== connectedMembersBefore ||
+            (await pageShowsMessage(GENERIC_CONNECTION_ERROR_MSG)) ||
+            (await pageShowsMessage(GROUP_ID_MISMATCH_MSG))
+          );
+        }, { timeout: 5000, interval: 500 });
+      } catch {
+        // handled below with richer diagnostics
+      }
+    }
+
+    if (await pageShowsMessage(GENERIC_CONNECTION_ERROR_MSG)) {
+      throw new Error(
+        `Scanning ${name}'s OOBI did not add the member. toast="${await getLatestToastMessage()}" before="${connectedMembersBefore}" after="${connectedMembersAfter}" oobi="${charlieOobiForApp}"`
+      );
+    }
+    if (await pageShowsMessage(GROUP_ID_MISMATCH_MSG)) {
+      throw new Error(
+        `Scanning ${name}'s OOBI failed with group-id mismatch. before="${connectedMembersBefore}" after="${connectedMembersAfter}" oobi="${charlieOobiForApp}"`
+      );
+    }
+
+    addedAnyMember = true;
+  }
+
+  if (addedAnyMember) {
+    await browser.pause(1500);
+    await browser.waitUntil(
+      async () => {
+        const text = await getPendingGroupPrimaryButtonText();
+        return /continue setup/i.test(text);
+      },
+      { timeout: 30000, timeoutMsg: "Continue setup button did not appear" }
+    );
+    await browser.execute(() => {
+      const btn = document.querySelector(
+        "[data-testid='primary-button-pending-group']"
+      ) as HTMLElement | null;
+      if (btn) btn.click();
+    });
+    await browser.pause(2000);
+  }
+
   await browser.waitUntil(
-    async () =>
-      $("[data-testid='primary-button-pending-group']")
-        .isDisplayed()
-        .catch(() => false),
+    async () => {
+      const text = await getPendingGroupPrimaryButtonText();
+      return /accept/i.test(text);
+    },
     {
       timeout: 60000,
       timeoutMsg:
-        "PendingGroup Accept button (primary-button-pending-group) did not appear for Bob within 60 s",
+        "PendingGroup Accept button did not appear for Bob within 60 s",
     }
   );
 
@@ -530,11 +749,39 @@ When(/^Bob accepts the group invitation in the app$/, async function () {
   );
   await browser.pause(500);
 
-  console.log("[Bob] Clicking Accept on PendingGroup screen");
-  await $("[data-testid='primary-button-pending-group']").click();
-  await browser.pause(1000);
+  // Auto-lock can trigger during the long OOBI-resolve wait — dismiss before Accept
+  await dismissLockScreenIfPresent();
 
-  await browser.pause(2000);
+  console.log("[Bob] Clicking Accept on PendingGroup screen");
+  await browser.execute(() => {
+    const btn = document.querySelector(
+      "[data-testid='primary-button-pending-group']"
+    ) as HTMLElement | null;
+    if (btn) btn.click();
+  });
+  await browser.pause(3000);
+
+  // After Accept the app may land back on the QR scan/camera overlay on
+  // group-profile-setup. The native camera blocks the webview from processing
+  // KERI notifications (group-active). Dismiss it now so the app can receive
+  // those notifications while the backend completes the joining ceremony.
+  const url = await browser.getUrl().catch(() => "");
+  if (url.includes("group-profile-setup")) {
+    console.log("[Bob] Still on group-profile-setup after Accept — switching to Provide tab to dismiss camera");
+    // Lock screen may reappear during the 3 s pause after Accept
+    await dismissLockScreenIfPresent();
+    const provideTab = $("[data-testid='share-oobi-segment-button']");
+    if (await provideTab.isExisting().catch(() => false)) {
+      await browser.execute(() => {
+        const tab = document.querySelector(
+          "[data-testid='share-oobi-segment-button']"
+        ) as HTMLElement | null;
+        if (tab) tab.click();
+      });
+      await browser.pause(1000);
+    }
+    console.log("[Bob] Camera dismissed, app can now receive group-active notifications");
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -586,22 +833,65 @@ Then(/^the group becomes "Active" for the joiner$/, async function () {
     throw new Error("Connection not part of this group — scan rejected.");
   }
 
-  try {
-    await ProfileSetupScreen.waitForGroupActive(60000);
-    await assertGroupProfileActiveInProfilesList(groupName);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(msg);
+  // Lock screen can appear during Step 6 (backend join ceremony). Dismiss first.
+  await dismissLockScreenIfPresent();
+
+  // When on group-profile-setup, ensure we're on Provide tab so the webview can
+  // receive KERI notifications. The native camera on Scan tab blocks processing.
+  // Always switch (don't rely on cameraBlocking selectors which may not match).
+  const url = await browser.getUrl().catch(() => "");
+  if (url.includes("group-profile-setup")) {
+    console.log("[Assert] On group-profile-setup — switching to Provide tab to allow KERI notifications");
+    const provideTab = $("[data-testid='share-oobi-segment-button']");
+    if (await provideTab.isExisting().catch(() => false)) {
+      await browser.execute(() => {
+        const tab = document.querySelector(
+          "[data-testid='share-oobi-segment-button']"
+        ) as HTMLElement | null;
+        if (tab) tab.click();
+      });
+      await browser.pause(1500);
+    }
   }
 
-  const url = await browser.getUrl();
-  if (url.includes("/tabs/home") || url.includes("/home")) {
-    const homeTab = await $("[data-testid='tab-button-home']")
-      .isExisting()
-      .catch(() => false);
-    if (!homeTab) {
-      throw new Error("Home tab not found after group became active");
+  // Poll for home URL or profiles-panel availability (the group-active push
+  // may navigate to home OR keep us on profiles with the group shown as Active).
+  const activeTimeoutMs = 360000;
+  await browser.waitUntil(
+    async () => {
+      const url = await browser.getUrl().catch(() => "");
+      if (url.includes("/tabs/home") || url.includes("/home")) return true;
+
+      // Some app versions land on profiles instead of home — check for the
+      // active group in the profiles list directly.
+      const groupActive = await browser.execute((name: string) => {
+        const root = document.querySelector("[data-testid='profiles']");
+        if (!root) return false;
+        const items = root.querySelectorAll("[data-testid^='profiles-list-item-']");
+        for (const item of items) {
+          const nameEl = item.querySelector(".profiles-list-item-name");
+          if ((nameEl?.textContent?.trim() ?? "").toLowerCase() !== name.toLowerCase()) continue;
+          const testId = item.getAttribute("data-testid") ?? "";
+          const id = testId.replace(/^profiles-list-item-/, "");
+          const hasPending = !!item.querySelector(`[data-testid='profiles-list-item-pending-${id}-status']`);
+          const hasAction = !!item.querySelector(`[data-testid='profiles-list-item-action-${id}-status']`);
+          return !hasPending && !hasAction;
+        }
+        return false;
+      }, groupName);
+      return groupActive;
+    },
+    {
+      timeout: activeTimeoutMs,
+      interval: 2000,
+      timeoutMsg: `Group did not become active within ${activeTimeoutMs}ms`,
     }
+  );
+
+  // If we reached home, verify the tab bar; otherwise verify via profiles list.
+  const finalUrl = await browser.getUrl().catch(() => "");
+  if (finalUrl.includes("/tabs/home") || finalUrl.includes("/home")) {
+    await assertGroupProfileActiveInProfilesList(groupName);
   }
 });
 

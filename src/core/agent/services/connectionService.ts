@@ -794,7 +794,10 @@ class ConnectionService extends AgentService {
       operation = (await waitAndGetDoneOp(
         this.props.signifyClient,
         await this.props.signifyClient.oobis().resolve(strippedUrl),
-        5000
+        // Group/member OOBI resolution on mobile can take longer than 5 s,
+        // especially during multisig ceremonies where multiple participants
+        // and notifications are being processed in parallel.
+        30000
       )) as Operation & { response: State };
 
       if (!operation.done) {

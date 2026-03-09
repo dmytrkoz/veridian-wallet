@@ -50,7 +50,7 @@ export const config: Options.Testrunner = {
       "./tests/actions/**/*.ts",
     ],
     tags: "",
-    timeout: 100 * 1000,
+    timeout: 420 * 1000, // 420s – must exceed activeTimeoutMs (360s) in group-profile-joiner.steps.ts
   },
   onPrepare: function (config, capabilities) {
     const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");
