@@ -10,6 +10,7 @@ import {
   messagize,
   randomPasscode,
   ready,
+  Serder,
   Siger,
   SignifyClient,
   Tier,
@@ -427,6 +428,103 @@ export class RemoteInitiator extends RemoteJoiner {
     this.pushOperation(group.operation);
 
     return { groupId };
+  }
+}
+
+export class Issuer extends VirtualWallet {
+  async createRegistry(registryAlias: string) {
+    console.log(`[${this.aidName}] Creating registry: ${registryAlias}`);
+
+    const result = await this.client.registries().create({
+      name: this.aidName,
+      registryName: registryAlias
+    });
+
+    const op = await result.op();
+    await this.waitOperation(op);
+    await this.client.operations().delete(op.name);
+
+    const registries = await this.client.registries().list(this.aidName);
+    const registry = registries.find((r: any) => r.name === registryAlias);
+
+    console.log(`[${this.aidName}] Registry ${registryAlias} created with Regk: ${registry.regk}`);
+    return registry;
+  }
+
+  async issueCredential(params: {
+    registryId: string,
+    schemaSaid: string,
+    recipientId: string,
+    claims: any
+  }): Promise<string> {
+    console.log(`[${this.aidName}] Issuing credential to ${params.recipientId}`);
+
+    const result = await this.client.credentials().issue(
+      this.aidName,
+      {
+        ri: params.registryId,
+        s: params.schemaSaid,
+        a: {
+          i: params.recipientId,
+          ...params.claims
+        }
+      }
+    );
+
+    const op = await result.op;
+    const operationResponse = await this.waitOperation(op);
+
+    const credentialSaid = operationResponse.response.ced.d;
+    console.log(`[${this.aidName}] Credential issued. SAID: ${credentialSaid}`);
+    return credentialSaid;
+  }
+
+  async grantCredential(credentialSaid: string, recipientId: string) {
+    console.log(`[${this.aidName}] Granting credential ${credentialSaid} to ${recipientId}`);
+
+    const acdc = await this.client.credentials().get(credentialSaid);
+    const [grant, gsigs, gend] = await this.client.ipex().grant({
+      senderName: this.aidName,
+      acdc: new Serder(acdc.sad),
+      iss: new Serder(acdc.iss),
+      anc: new Serder(acdc.anc),
+      ancAttachment: acdc.ancatc,
+      recipient: recipientId,
+      datetime: new Date().toISOString().replace("Z", "000+00:00"),
+    });
+
+    const grantOperation = await this.client.ipex().submitGrant(
+      this.aidName,
+      grant,
+      gsigs,
+      gend,
+      [recipientId]
+    );
+
+    await this.waitOperation(grantOperation);
+    console.log(`[${this.aidName}] Grant completed for ${recipientId}`);
+  }
+
+  async admitCredential(grantNotification: any, recipientId: string) {
+    const [admit, sigs, aend] = await this.client.ipex().admit({
+      senderName: this.aidName,
+      message: '',
+      grantSaid: grantNotification.a.d,
+      recipient: recipientId,
+      datetime: new Date().toISOString().replace("Z", "000+00:00"),
+    });
+
+    const admitOperation = await this.client.ipex().submitAdmit(
+      this.aidName,
+      admit,
+      sigs,
+      aend,
+      [recipientId]
+    );
+
+    await this.waitOperation(admitOperation);
+    await this.client.notifications().mark(grantNotification.i);
+    console.log(`[${this.aidName}] Credential admitted.`);
   }
 }
 
