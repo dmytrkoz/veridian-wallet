@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Agent } from "../../../core/agent/agent";
 import { MiscRecordId } from "../../../core/agent/agent.types";
 import { BasicRecord } from "../../../core/agent/records";
+import { KeyStoreKeys, SecureStorage } from "../../../core/storage";
 import { RoutePath } from "../../../routes";
 import { getNextRoute } from "../../../routes/nextRoute";
 import { useAppDispatch, useAppSelector } from "../../../store/hooks";
@@ -15,6 +16,10 @@ import {
   getStateCache,
   setIsSetupProfile,
   setRecoveryCompleteNoInterruption,
+  setSeedPhraseVerified,
+  setSsiAgentIsSet,
+  setSyncingData,
+  showGlobalLoading,
 } from "../../../store/reducers/stateCache";
 import { updateReduxState } from "../../../store/utils";
 import { ToastMsgType } from "../../globals/types";
@@ -25,6 +30,7 @@ import { CurrentPage, SSIError } from "./CreateSSIAgent.types";
 import { AdvancedSetting, removeLastSlash } from "./components/AdvancedSetting";
 import { Connect } from "./components/Connect";
 import { SSIScan } from "./components/SSIScan";
+import { GlobalLoadingType } from "../../../store/reducers/stateCache/stateCache.types";
 
 const SSI_URLS_EMPTY = "SSI url is empty";
 const SEED_PHRASE_EMPTY = "Invalid seed phrase";
@@ -44,6 +50,8 @@ const CreateSSIAgent = () => {
     isInvalidConnectUrl: false,
     failedDiscoveryConnectUrl: false,
     connectURlNotFound: false,
+    bootNetworkIssue: false,
+    connectNetworkIssue: false,
   });
   const [currentPage, setCurrentPage] = useState(CurrentPage.Connect);
 
@@ -57,40 +65,32 @@ const CreateSSIAgent = () => {
     }));
   };
 
-  const handleScanError = (error: Error) => {
+  const handleScanError = (
+    error: Error,
+    context:
+      | { recovery: false }
+      | { recovery: true; connectUrlDiscovered: boolean }
+  ) => {
     const errorMessage = error.message;
 
-    if (errorMessage.includes(Agent.CONNECT_URL_DISCOVERY_FAILED)) {
-      showError(
-        errorMessage,
-        error,
-        dispatch,
-        ToastMsgType.CONNECT_URL_DISCOVER_ERROR
-      );
+    const invalidUrlErrors = [Agent.CONNECT_URL_DISCOVERY_FAILED];
+    if (context.recovery && !context.connectUrlDiscovered) {
+      invalidUrlErrors.push(Agent.KERIA_NOT_BOOTED);
+    }
+
+    if (invalidUrlErrors.some((message) => errorMessage.includes(message))) {
+      showError(errorMessage, error, dispatch, ToastMsgType.URL_ERROR);
       return;
     }
 
-    if (errorMessage.includes(Agent.CONNECT_URL_NOT_FOUND)) {
-      showError(
-        errorMessage,
-        error,
-        dispatch,
-        ToastMsgType.FIND_CONNECT_URL_ERROR
-      );
-      return;
-    }
-
-    if (Agent.KERIA_BOOT_FAILED === errorMessage) {
-      showError(errorMessage, error, dispatch, ToastMsgType.INVALID_BOOT_URL);
-    }
-
-    if (Agent.KERIA_BOOTED_ALREADY_BUT_CANNOT_CONNECT === errorMessage) {
-      showError(
-        errorMessage,
-        error,
-        dispatch,
-        ToastMsgType.INVALID_CONNECT_URL
-      );
+    if (
+      [
+        Agent.KERIA_BOOT_FAILED_BAD_NETWORK,
+        Agent.KERIA_CONNECT_FAILED_BAD_NETWORK,
+        Agent.CONNECT_URL_DISCOVERY_BAD_NETWORK,
+      ].some((message) => errorMessage.includes(message))
+    ) {
+      showError(errorMessage, error, dispatch, ToastMsgType.NETWORK_ERROR);
       return;
     }
 
@@ -105,28 +105,31 @@ const CreateSSIAgent = () => {
   const handleError = (error: Error) => {
     const errorMessage = error.message;
 
-    if (errorMessage.includes(Agent.CONNECT_URL_DISCOVERY_FAILED)) {
-      setSSIError({
-        failedDiscoveryConnectUrl: true,
-      });
-    }
-
     if (Agent.KERIA_BOOT_FAILED === errorMessage) {
       setSSIError({
         isInvalidBootUrl: true,
       });
-    }
-
-    if (Agent.KERIA_NOT_BOOTED === errorMessage) {
-      setSSIError({
-        hasMismatchError: true,
-      });
+      return;
     }
 
     if (Agent.KERIA_BOOTED_ALREADY_BUT_CANNOT_CONNECT === errorMessage) {
       setSSIError({
         isInvalidConnectUrl: true,
       });
+      return;
+    }
+
+    if (Agent.KERIA_NOT_BOOTED === errorMessage) {
+      showError(
+        errorMessage,
+        error,
+        dispatch,
+        ToastMsgType.CONNECT_URL_MISMATCH
+      );
+      setSSIError({
+        hasMismatchError: true,
+      });
+      return;
     }
 
     if (
@@ -135,10 +138,12 @@ const CreateSSIAgent = () => {
         Agent.KERIA_CONNECT_FAILED_BAD_NETWORK,
       ].includes(errorMessage)
     ) {
+      showError(errorMessage, error, dispatch, ToastMsgType.NETWORK_ERROR);
       setSSIError({
-        unknownError: true,
+        bootNetworkIssue: errorMessage === Agent.KERIA_BOOT_FAILED_BAD_NETWORK,
+        connectNetworkIssue:
+          errorMessage === Agent.KERIA_CONNECT_FAILED_BAD_NETWORK,
       });
-      showError("Bad network", error);
       return;
     }
 
@@ -197,10 +202,69 @@ const CreateSSIAgent = () => {
     [dispatch, identifiers]
   );
 
-  const handleRecoveryWallet = async (connectUrl: string) => {
-    setLoading(true);
+  const getConnectUrl = async (bootUrl: string) => {
     try {
-      if (!connectUrl) {
+      return await Agent.agent.discoverConnectUrl(bootUrl);
+    } catch (e) {
+      const message = (e as Error).message;
+
+      if (message.startsWith(Agent.CONNECT_URL_DISCOVERY_FAILED)) {
+        return bootUrl;
+      }
+
+      throw e;
+    }
+  };
+
+  const handlePostRecovery = async () => {
+    await Agent.agent.markSeedPhraseAsVerified();
+    dispatch(setSeedPhraseVerified(true));
+    dispatch(setRecoveryCompleteNoInterruption());
+  };
+
+  const recoverAndLoadDb = async () => {
+    const recoveryStatus = await Agent.agent.basicStorage.findById(
+      MiscRecordId.CLOUD_RECOVERY_STATUS
+    );
+
+    const isSyncing = recoveryStatus?.content?.syncing;
+
+    if (isSyncing) {
+      setCurrentPage(CurrentPage.Connect);
+      dispatch(setSsiAgentIsSet(true));
+    }
+
+    await Agent.agent.connect(Agent.DEFAULT_RECONNECT_INTERVAL, false);
+
+    if (isSyncing) {
+      try {
+        dispatch(setSyncingData(true));
+        dispatch(showGlobalLoading(GlobalLoadingType.HIDEBG));
+        await Agent.agent.syncWithKeria();
+        await handlePostRecovery();
+      } catch (e) {
+        const errorMessage = (e as Error).message;
+
+        if (errorMessage === Agent.SYNC_DATA_NETWORK_ERROR) {
+          await recoverAndLoadDb();
+          return;
+        }
+
+        throw e;
+      } finally {
+        dispatch(showGlobalLoading(GlobalLoadingType.NONE));
+      }
+    }
+  };
+
+  const handleRecoveryWallet = async (bootUrl: string) => {
+    setLoading(true);
+
+    let validBootUrl: string | undefined;
+    let connectUrl: string | undefined;
+
+    try {
+      if (!bootUrl) {
         throw new Error(SSI_URLS_EMPTY);
       }
 
@@ -208,15 +272,15 @@ const CreateSSIAgent = () => {
         throw new Error(SEED_PHRASE_EMPTY);
       }
 
-      const validConnectUrl = removeLastSlash(connectUrl.trim());
+      validBootUrl = removeLastSlash(bootUrl.trim());
+      connectUrl = await getConnectUrl(validBootUrl);
 
       await Agent.agent.recoverKeriaAgent(
         seedPhraseCache.seedPhrase.split(" "),
-        validConnectUrl
+        connectUrl
       );
 
-      dispatch(setRecoveryCompleteNoInterruption());
-
+      await handlePostRecovery();
       // Note: We need to wait load data from db before go to next page
     } catch (e) {
       const errorMessage = (e as Error).message;
@@ -229,8 +293,15 @@ const CreateSSIAgent = () => {
         return;
       }
 
+      if (Agent.SYNC_DATA_NETWORK_ERROR === errorMessage) {
+        await recoverAndLoadDb();
+        return;
+      }
+
       if (currentPage === CurrentPage.Scan) {
-        handleScanError(e as Error);
+        const connectUrlDiscovered =
+          connectUrl !== undefined && validBootUrl !== connectUrl;
+        handleScanError(e as Error, { recovery: true, connectUrlDiscovered });
         return;
       }
 
@@ -288,6 +359,18 @@ const CreateSSIAgent = () => {
     try {
       const validBootUrl = removeLastSlash(bootUrl.trim());
 
+      const existBran = await SecureStorage.keyExists(
+        KeyStoreKeys.SIGNIFY_BRAN
+      );
+
+      if (!existBran) {
+        const seedPhraseStore = await Agent.agent.getBranAndMnemonic();
+        await SecureStorage.set(
+          KeyStoreKeys.SIGNIFY_BRAN,
+          seedPhraseStore.bran
+        );
+      }
+
       if (connectUrl) {
         const validconnectUrl = removeLastSlash(connectUrl.trim());
 
@@ -323,7 +406,7 @@ const CreateSSIAgent = () => {
       ionRouter.push(nextPath.pathname, "forward", "push");
     } catch (e) {
       if (currentPage === CurrentPage.Scan) {
-        handleScanError(e as Error);
+        handleScanError(e as Error, { recovery: false });
         return;
       }
 
@@ -333,12 +416,31 @@ const CreateSSIAgent = () => {
     }
   };
 
-  const handleSSI = async (mainUrl: string, connectUrl?: string) => {
-    if (stateCache.authentication.recoveryWalletProgress) {
-      return await handleRecoveryWallet(mainUrl);
-    } else {
-      if (currentPage == CurrentPage.AdvancedSetting && !connectUrl) return;
+  const clearError = () => {
+    setError({
+      hasMismatchError: false,
+      unknownError: false,
+      isInvalidBootUrl: false,
+      isInvalidConnectUrl: false,
+      failedDiscoveryConnectUrl: false,
+      connectURlNotFound: false,
+      bootNetworkIssue: false,
+      connectNetworkIssue: false,
+    });
+  };
 
+  const handleSSI = async (mainUrl?: string, connectUrl?: string) => {
+    clearError();
+
+    if (stateCache.authentication.recoveryWalletProgress) {
+      if (currentPage == CurrentPage.Scan && mainUrl) {
+        return await handleRecoveryWallet(mainUrl);
+      }
+
+      if (!connectUrl) return;
+      return await handleRecoveryWallet(connectUrl);
+    } else {
+      if (!mainUrl) return;
       return await handleCreateSSI(mainUrl, connectUrl);
     }
   };
@@ -351,6 +453,7 @@ const CreateSSIAgent = () => {
             setCurrentPage={setCurrentPage}
             onScanFinish={handleSSI}
             isLoading={loading}
+            isRecovery={stateCache.authentication.recoveryWalletProgress}
           />
         );
       case CurrentPage.AdvancedSetting:

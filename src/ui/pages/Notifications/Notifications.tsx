@@ -10,9 +10,9 @@ import { i18n } from "../../../i18n";
 import { TabsRoutePath } from "../../../routes/paths";
 import { useAppDispatch, useAppSelector } from "../../../store/hooks";
 import {
+  getConnectionsCache,
   getCurrentProfile,
   markNotificationAsRead,
-  getConnectionsCache,
 } from "../../../store/reducers/profileCache";
 import { setCurrentRoute } from "../../../store/reducers/stateCache";
 import { Alert } from "../../components/Alert";
@@ -216,30 +216,33 @@ const Notifications = () => {
           ))}
         </div>
         <div className="notifications-tab-content">
-          <NotificationSection
-            title={i18n.t("tabs.notifications.tab.sections.new")}
-            data={notificationsNew}
-            pageId={pageId}
-            onNotificationClick={handleNotificationClick}
-            enableInfiniteScroll={false}
-            testId="notifications-tab-section-new"
-          />
-          <NotificationSection
-            title={i18n.t("tabs.notifications.tab.sections.earlier.title")}
-            data={notificationsEarlier}
-            pageId={pageId}
-            onNotificationClick={handleNotificationClick}
-            enableInfiniteScroll={true}
-            initialDisplayCount={3}
-            loadMoreCount={5}
-            testId="notifications-tab-section-earlier"
-            ref={earlierNotificationRef}
-          />
-          <p className="notification-empty">
-            {filteredNotification.length === 0
-              ? i18n.t("tabs.notifications.tab.empty")
-              : i18n.t("tabs.notifications.tab.sections.earlier.end")}
-          </p>
+          {filteredNotification.length > 0 ? (
+            <>
+              <NotificationSection
+                title={i18n.t("tabs.notifications.tab.sections.new")}
+                data={notificationsNew}
+                pageId={pageId}
+                onNotificationClick={handleNotificationClick}
+                enableInfiniteScroll={false}
+                testId="notifications-tab-section-new"
+              />
+              <NotificationSection
+                title={i18n.t("tabs.notifications.tab.sections.earlier.title")}
+                data={notificationsEarlier}
+                pageId={pageId}
+                onNotificationClick={handleNotificationClick}
+                enableInfiniteScroll
+                initialDisplayCount={3}
+                loadMoreCount={5}
+                testId="notifications-tab-section-earlier"
+                ref={earlierNotificationRef}
+              />
+            </>
+          ) : (
+            <p className="notification-empty">
+              {i18n.t("tabs.notifications.tab.empty")}
+            </p>
+          )}
         </div>
       </TabLayout>
       <Profiles

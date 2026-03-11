@@ -1,5 +1,6 @@
 import { TapJacking } from "@capacitor-community/tap-jacking";
 import { LensFacing } from "@capacitor-mlkit/barcode-scanning";
+import { Capacitor } from "@capacitor/core";
 import { Device } from "@capacitor/device";
 import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 import { ReactNode, useCallback, useEffect, useState } from "react";
@@ -19,7 +20,6 @@ import { IdentifierService } from "../../../core/agent/services";
 import { CredentialStatus } from "../../../core/agent/services/credentialService.types";
 import { IdentifierShortDetails } from "../../../core/agent/services/identifier.types";
 import { PeerConnection } from "../../../core/cardano/walletConnect/peerConnection";
-import { notificationService } from "../../../native/pushNotifications/notificationService";
 import {
   PeerConnectedEvent,
   PeerConnectionBrokenEvent,
@@ -28,8 +28,14 @@ import {
 } from "../../../core/cardano/walletConnect/peerConnection.types";
 import { KeyStoreKeys, SecureStorage } from "../../../core/storage";
 import { i18n } from "../../../i18n";
+import { notificationService } from "../../../native/pushNotifications/notificationService";
 import { useAppDispatch, useAppSelector } from "../../../store/hooks";
 import { setEnableBiometricsCache } from "../../../store/reducers/biometricsCache";
+import {
+  getNotificationsPreferences,
+  setNotificationsConfigured,
+  setNotificationsEnabled,
+} from "../../../store/reducers/notificationsPreferences/notificationsPreferences";
 import {
   DAppConnection,
   getConnectedDApp,
@@ -39,6 +45,7 @@ import {
   setIsConnectingToDApp,
   setPendingDAppConnection,
   setProfiles,
+  switchProfileFromNotification,
   updateOrAddConnectionCache,
   updateOrAddCredsCache,
   updatePeerConnectionsFromCore,
@@ -58,15 +65,17 @@ import {
   setPauseQueueIncomingRequest,
   setPendingJoinGroupMetadata,
   setQueueIncomingRequest,
+  setSyncingData,
   setToastMsg,
   showNoWitnessAlert,
+  showVerifySeedPhraseAlert,
 } from "../../../store/reducers/stateCache";
 import {
   IncomingRequestType,
   InitializationPhase,
   PendingJoinGroupMetadata,
 } from "../../../store/reducers/stateCache/stateCache.types";
-import { filterProfileData } from "../../../store/reducers/stateCache/utils";
+import { createProfileMapData } from "../../../store/reducers/stateCache/utils";
 import {
   setCredentialFavouriteIndex,
   setCredentialViewTypeCache,
@@ -86,6 +95,7 @@ import {
   notificationStateChanged,
   operationCompleteHandler,
   operationFailureHandler,
+  removeInvalidConnectionCacheHandler,
 } from "./coreEventListeners";
 import { useActivityTimer } from "./hooks/useActivityTimer";
 
@@ -231,7 +241,76 @@ const AppWrapper = (props: { children: ReactNode }) => {
     getRecoveryCompleteNoInterruption
   );
   const forceInitApp = useAppSelector(getForceInitApp);
+  const notificationsPreferences = useAppSelector(getNotificationsPreferences);
+  const [areDependenciesReady, setAreDependenciesReady] = useState(
+    Agent.agent.dependenciesInitialized
+  );
+
+  const persistNotificationsPreferences = useCallback(
+    async (enabled: boolean, configured: boolean) => {
+      dispatch(setNotificationsEnabled(enabled));
+      dispatch(setNotificationsConfigured(configured));
+
+      if (!Agent.agent.dependenciesInitialized) {
+        return;
+      }
+
+      try {
+        await Agent.agent.basicStorage.createOrUpdateBasicRecord(
+          new BasicRecord({
+            id: MiscRecordId.APP_NOTIFICATIONS,
+            content: { enabled, configured },
+          })
+        );
+      } catch (error) {
+        showError("Failed to update notification settings", error, dispatch);
+      }
+    },
+    [dispatch]
+  );
+
+  useEffect(() => {
+    const syncNotificationsPreferences = async (): Promise<void> => {
+      if (!areDependenciesReady || !Agent.agent.dependenciesInitialized) {
+        return;
+      }
+
+      if (notificationsPreferences.configured) {
+        return;
+      }
+
+      if (Capacitor.getPlatform() === "web") {
+        return;
+      }
+
+      try {
+        const granted = await notificationService.arePermissionsGranted();
+        if (!granted) {
+          return;
+        }
+
+        await persistNotificationsPreferences(true, true);
+      } catch (error) {
+        showError(
+          "Unable to synchronise notification preferences",
+          error,
+          dispatch
+        );
+      }
+    };
+
+    void syncNotificationsPreferences();
+  }, [
+    areDependenciesReady,
+    notificationsPreferences.configured,
+    dispatch,
+    persistNotificationsPreferences,
+  ]);
   const [isAlertPeerBrokenOpen, setIsAlertPeerBrokenOpen] = useState(false);
+  const [
+    showOnboardingNotificationsAlert,
+    setShowOnboardingNotificationsAlert,
+  ] = useState<boolean>(false);
   const { getRecentDefaultProfile, updateProfileHistories } = useProfile();
   useActivityTimer();
 
@@ -326,6 +405,21 @@ const AppWrapper = (props: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recoveryCompleteNoInterruption]);
 
+  const handlePostRecovery = async () => {
+    try {
+      dispatch(setInitializationPhase(InitializationPhase.PHASE_TWO)); // Show offline mode page
+
+      await Agent.agent.connect(Agent.DEFAULT_RECONNECT_INTERVAL, false);
+      await recoverAndLoadDb();
+    } catch (e) {
+      if (e instanceof Error && e.message === Agent.SYNC_DATA_NETWORK_ERROR) {
+        handlePostRecovery();
+      } else {
+        throw e;
+      }
+    }
+  };
+
   useEffect(() => {
     const startAgent = async () => {
       // This small pause allows the LockPage to close fully in the UI before starting the agent.
@@ -339,16 +433,10 @@ const AppWrapper = (props: { children: ReactNode }) => {
       } catch (e) {
         if (
           e instanceof Error &&
-          e.message === Agent.KERIA_CONNECT_FAILED_BAD_NETWORK
+          (e.message === Agent.KERIA_CONNECT_FAILED_BAD_NETWORK ||
+            e.message === Agent.SYNC_DATA_NETWORK_ERROR)
         ) {
-          dispatch(setInitializationPhase(InitializationPhase.PHASE_TWO)); // Show offline mode page
-
-          // No await, background this task and continue initializing
-          Agent.agent
-            .connect(Agent.DEFAULT_RECONNECT_INTERVAL, false)
-            .then(() => {
-              recoverAndLoadDb();
-            });
+          handlePostRecovery();
         } else {
           throw e;
         }
@@ -403,35 +491,42 @@ const AppWrapper = (props: { children: ReactNode }) => {
         {}
       );
 
+      const {
+        profileArchivedCredentialsMap,
+        profileConnectionsMap,
+        profileCredentialsMap,
+        profileNotificationsMap,
+        profilePeerConnectionsMap,
+        filterMutisigMap,
+      } = createProfileMapData(
+        credsCache,
+        credsArchivedCache,
+        allConnections as RegularConnectionDetails[],
+        storedPeerConnections,
+        notifications,
+        allMultisigConnections as MultisigConnectionDetails[]
+      );
+
       const profiles = storedIdentifiers.reduce(
         (acc: Record<string, Profile>, identifier) => {
-          const {
-            profileIdentifier,
-            profileCredentials,
-            profileArchivedCredentials,
-            profileConnections,
-            profileMultisigConnections,
-            profilePeerConnections,
-            profileNotifications,
-          } = filterProfileData(
-            identifiersDict,
-            credsCache,
-            credsArchivedCache,
-            allConnections as RegularConnectionDetails[],
-            allMultisigConnections as MultisigConnectionDetails[],
-            storedPeerConnections,
-            notifications,
-            identifier
-          );
+          const groupIdToFilter = identifier.groupMemberPre
+            ? identifiersDict[identifier.groupMemberPre]?.groupMetadata?.groupId
+            : identifier.groupMetadata?.groupId;
+
+          const multisigConnections =
+            groupIdToFilter && filterMutisigMap[groupIdToFilter]
+              ? filterMutisigMap[groupIdToFilter]
+              : [];
 
           acc[identifier.id] = {
-            identity: profileIdentifier,
-            connections: profileConnections,
-            multisigConnections: profileMultisigConnections,
-            peerConnections: profilePeerConnections,
-            credentials: profileCredentials,
-            archivedCredentials: profileArchivedCredentials,
-            notifications: profileNotifications,
+            identity: identifier,
+            connections: profileConnectionsMap[identifier.id] || [],
+            multisigConnections: multisigConnections,
+            peerConnections: profilePeerConnectionsMap[identifier.id] || [],
+            credentials: profileCredentialsMap[identifier.id] || [],
+            archivedCredentials:
+              profileArchivedCredentialsMap[identifier.id] || [],
+            notifications: profileNotificationsMap[identifier.id] || [],
           };
 
           return acc;
@@ -475,7 +570,6 @@ const AppWrapper = (props: { children: ReactNode }) => {
       }
 
       dispatch(setProfiles(profiles));
-
       dispatch(setCurrentProfile(currentProfileAid));
     } catch (e) {
       showError("Failed to load database data", e, dispatch);
@@ -487,10 +581,6 @@ const AppWrapper = (props: { children: ReactNode }) => {
       const passcodeIsSet = await SecureStorage.keyExists(
         KeyStoreKeys.APP_PASSCODE
       );
-      const seedPhraseIsSet = await SecureStorage.keyExists(
-        KeyStoreKeys.SIGNIFY_BRAN
-      );
-
       const passwordIsSet = await SecureStorage.keyExists(
         KeyStoreKeys.APP_OP_PASSWORD
       );
@@ -505,6 +595,7 @@ const AppWrapper = (props: { children: ReactNode }) => {
       const credsFavourites = await Agent.agent.basicStorage.findById(
         MiscRecordId.CREDS_FAVOURITES
       );
+
       if (credsFavourites) {
         dispatch(
           setFavouritesCredsCache(
@@ -531,6 +622,30 @@ const AppWrapper = (props: { children: ReactNode }) => {
       if (appBiometrics) {
         dispatch(
           setEnableBiometricsCache(appBiometrics.content.enabled as boolean)
+        );
+      }
+
+      const appNotifications = await Agent.agent.basicStorage.findById(
+        MiscRecordId.APP_NOTIFICATIONS
+      );
+      let storedNotificationsPreferences: {
+        enabled: boolean;
+        configured: boolean;
+      } | null = null;
+      if (appNotifications) {
+        const { enabled, configured } = appNotifications.content as {
+          enabled?: boolean;
+          configured?: boolean;
+        };
+        storedNotificationsPreferences = {
+          enabled: !!enabled,
+          configured: !!configured,
+        };
+        dispatch(
+          setNotificationsEnabled(storedNotificationsPreferences.enabled)
+        );
+        dispatch(
+          setNotificationsConfigured(storedNotificationsPreferences.configured)
         );
       }
 
@@ -607,11 +722,16 @@ const AppWrapper = (props: { children: ReactNode }) => {
         }
       }
 
+      const isSeedPhraseVerified = await Agent.agent.isSeedPhraseVerified();
+      const isShowVerifySeedPhrase = await Agent.agent.isVerificationEnforced();
+
+      dispatch(showVerifySeedPhraseAlert(isShowVerifySeedPhrase));
+
       dispatch(
         setAuthentication({
           ...authentication,
           passcodeIsSet,
-          seedPhraseIsSet,
+          seedPhraseIsSet: !!isSeedPhraseVerified,
           passwordIsSet,
           passwordIsSkipped: !!passwordSkipped?.content.value,
           ssiAgentIsSet:
@@ -626,6 +746,7 @@ const AppWrapper = (props: { children: ReactNode }) => {
 
       return {
         keriaConnectUrlRecord,
+        notificationsPreferences: storedNotificationsPreferences,
       };
     } catch (e) {
       showError("Failed to load cache data", e, dispatch);
@@ -633,16 +754,29 @@ const AppWrapper = (props: { children: ReactNode }) => {
     }
   };
 
-  const setupEventServiceCallbacks = () => {
-    notificationService.initialize();
+  const setupEventServiceCallbacks = async (
+    isNotificationsConfigured: boolean
+  ) => {
+    try {
+      const permissionsGranted = await notificationService.initialize();
+      if (permissionsGranted && !isNotificationsConfigured) {
+        await persistNotificationsPreferences(true, true);
+        isNotificationsConfigured = true;
+      }
+    } catch (error) {
+      if (Capacitor.getPlatform() === "android") {
+        setShowOnboardingNotificationsAlert(true);
+      } else {
+        showError("Unable to initialise notification service", error, dispatch);
+      }
+    }
+
     notificationService.setProfileSwitcher(async (profileId: string) => {
-      dispatch(setCurrentProfile(profileId));
-      await Agent.agent.basicStorage.createOrUpdateBasicRecord(
-        new BasicRecord({
-          id: MiscRecordId.DEFAULT_PROFILE,
-          content: { defaultProfile: profileId },
-        })
-      );
+      if (!Agent.agent.dependenciesInitialized) {
+        return false;
+      }
+
+      return await dispatch(switchProfileFromNotification(profileId));
     });
 
     Agent.agent.onKeriaStatusStateChanged((event) => {
@@ -692,10 +826,16 @@ const AppWrapper = (props: { children: ReactNode }) => {
     Agent.agent.multiSigs.onGroupAdded((event) => {
       groupCreatedHandler(event, dispatch);
     });
+
+    Agent.agent.connections.onConnectionInvalid((event) => {
+      removeInvalidConnectionCacheHandler(event, dispatch);
+    });
   };
 
   const initApp = async () => {
     const agent = Agent.agent;
+    let keriaConnectUrlRecord: BasicRecord | null = null;
+    let cachedNotificationsConfigured = notificationsPreferences.configured;
 
     if (!agent.dependenciesInitialized) {
       await agent.setupLocalDependencies();
@@ -718,12 +858,25 @@ const AppWrapper = (props: { children: ReactNode }) => {
       if (process.env.DEV_SKIP_ONBOARDING === "true") {
         await agent.devPreload();
       }
-      await loadCacheBasicStorage();
+      const {
+        keriaConnectUrlRecord: cachedKeriaRecord,
+        notificationsPreferences: storedNotificationsPreferences,
+      } = await loadCacheBasicStorage();
+      keriaConnectUrlRecord = cachedKeriaRecord || null;
+      if (storedNotificationsPreferences) {
+        cachedNotificationsConfigured =
+          storedNotificationsPreferences.configured;
+      }
       agent.dependenciesInitialized = true;
+      if (!areDependenciesReady) {
+        setAreDependenciesReady(true);
+      }
+    } else if (!areDependenciesReady) {
+      setAreDependenciesReady(true);
     }
 
     if (!agent.eventListenersSetup) {
-      setupEventServiceCallbacks();
+      await setupEventServiceCallbacks(cachedNotificationsConfigured);
       agent.eventListenersSetup = true;
     }
 
@@ -735,9 +888,11 @@ const AppWrapper = (props: { children: ReactNode }) => {
       agent.isPolling = true;
     }
 
-    const keriaConnectUrlRecord = await Agent.agent.basicStorage.findById(
-      MiscRecordId.KERIA_CONNECT_URL
-    );
+    if (!keriaConnectUrlRecord) {
+      keriaConnectUrlRecord = await Agent.agent.basicStorage.findById(
+        MiscRecordId.KERIA_CONNECT_URL
+      );
+    }
 
     dispatch(
       setInitializationPhase(
@@ -754,11 +909,14 @@ const AppWrapper = (props: { children: ReactNode }) => {
     const recoveryStatus = await Agent.agent.basicStorage.findById(
       MiscRecordId.CLOUD_RECOVERY_STATUS
     );
+
     if (recoveryStatus?.content?.syncing) {
+      dispatch(setSyncingData(true));
       await Agent.agent.syncWithKeria();
     }
 
     await loadDb();
+    dispatch(setSyncingData(false));
   };
 
   const loadDb = async () => {
@@ -780,6 +938,19 @@ const AppWrapper = (props: { children: ReactNode }) => {
         )}`}
         actionConfirm={() => setIsAlertPeerBrokenOpen(false)}
         actionDismiss={() => setIsAlertPeerBrokenOpen(false)}
+      />
+      <Alert
+        isOpen={showOnboardingNotificationsAlert}
+        setIsOpen={setShowOnboardingNotificationsAlert}
+        dataTestId="alert-onboarding-notifications-unavailable"
+        headerText={i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.onboardingunavailable"
+        )}
+        confirmButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.ok"
+        )}`}
+        actionConfirm={() => setShowOnboardingNotificationsAlert(false)}
+        actionDismiss={() => setShowOnboardingNotificationsAlert(false)}
       />
     </>
   );

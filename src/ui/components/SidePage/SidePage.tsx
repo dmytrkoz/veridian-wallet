@@ -49,12 +49,14 @@ const SidePage = () => {
   useEffect(() => {
     getContent() !== null && setLastContent(getContent());
     !openSidePage && clearLastContent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSidePage]);
 
   return (
     <SideSlider
       renderAsModal
       isOpen={openSidePage}
+      onClose={() => setOpenSidePage(false)}
     >
       {getContent() || lastContent}
     </SideSlider>

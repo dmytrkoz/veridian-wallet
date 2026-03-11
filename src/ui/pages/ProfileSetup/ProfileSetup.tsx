@@ -34,7 +34,7 @@ import { ToastMsgType } from "../../globals/types";
 import { useAppIonRouter } from "../../hooks";
 import { useProfile } from "../../hooks/useProfile";
 import { showError } from "../../utils/error";
-import { nameChecker } from "../../utils/nameChecker";
+import { nameChecker, uniqueGroupName } from "../../utils/nameChecker";
 import { GroupSetup } from "./components/GroupSetup";
 import { SetupProfile } from "./components/SetupProfile";
 import { ProfileType, SetupProfileType } from "./components/SetupProfileType";
@@ -98,11 +98,14 @@ export const ProfileSetup = ({
       (step === SetupProfileStep.SetupProfile &&
         profileType !== ProfileType.Group)
     ) {
+      setGroupName("");
+      setUserName("");
       setStep(SetupProfileStep.SetupType);
       return;
     }
 
     if (step === SetupProfileStep.SetupProfile) {
+      setUserName("");
       setStep(SetupProfileStep.GroupSetupStart);
       return;
     }
@@ -113,12 +116,15 @@ export const ProfileSetup = ({
   const errorMessage = (() => {
     const isGroup = profileType === ProfileType.Group;
     if (
-      Object.values(profiles).some(
-        (item) => item.identity.displayName === userName
-      ) &&
-      !isGroup
+      Object.values(profiles).some((item) =>
+        isGroup
+          ? item.identity.displayName === groupName
+          : item.identity.displayName === userName
+      )
     ) {
-      return `${i18n.t("nameerror.duplicatename")}`;
+      return isGroup
+        ? `${i18n.t("nameerror.duplicategroupname")}`
+        : `${i18n.t("nameerror.duplicatename")}`;
     }
 
     return isGroup && step === SetupProfileStep.GroupSetupStart
@@ -213,7 +219,7 @@ export const ProfileSetup = ({
 
       if (isModal) {
         onClose?.();
-        navToCredentials(identifier);
+        navToCredentials(identifier, isGroup);
         return;
       }
 
@@ -242,12 +248,13 @@ export const ProfileSetup = ({
     }
   };
 
-  const navToCredentials = (id?: string) => {
+  const navToCredentials = (id?: string, isGroup?: boolean) => {
     const { nextPath, updateRedux } = getNextRoute(RoutePath.PROFILE_SETUP, {
       store: { stateCache },
       state: {
         isSetupProfile: false,
         id,
+        isGroup,
       },
     });
 
@@ -268,11 +275,10 @@ export const ProfileSetup = ({
     setIsScanOpen(true);
   };
 
-  const handleCloseScan = () => {
-    if (joinGroupMode) {
+  const handleCloseScan = (shouldClosePage = false) => {
+    setIsScanOpen(false);
+    if (shouldClosePage && joinGroupMode) {
       onClose?.(true);
-    } else {
-      setIsScanOpen(false);
     }
   };
 
@@ -330,22 +336,30 @@ export const ProfileSetup = ({
             profile.identity.groupMetadata?.groupId === scanGroupId
         )
       ) {
-        handleCloseScan();
         dispatch(setToastMsg(ToastMsgType.DUPLICATE_GROUP_ID_ERROR));
+        scanRef.current?.registerScanHandler();
         return;
       }
 
       if (!scanGroupId) {
-        handleCloseScan();
         dispatch(setToastMsg(ToastMsgType.NOT_VALID_GROUP_INVITE));
+        scanRef.current?.registerScanHandler();
         return;
       }
 
       if (!scannedGroupName) {
-        handleCloseScan();
         dispatch(setToastMsg(ToastMsgType.GROUP_NAME_NOT_FOUND_ERROR));
+        scanRef.current?.registerScanHandler();
         return;
       }
+
+      const profileNames = Object.values(profiles).map(
+        (pro) => pro.identity.displayName
+      );
+
+      const newName = uniqueGroupName(scannedGroupName, profileNames);
+      url.searchParams.set("groupName", newName);
+      content = url.toString();
 
       const invitation = await resolveGroupConnection(
         content,
@@ -361,26 +375,30 @@ export const ProfileSetup = ({
       const pendingJoinData = {
         isPendingJoinGroup: true,
         groupId: scanGroupId,
-        groupName: scannedGroupName,
+        groupName: newName,
         initiatorName: groupInitiator,
         connection: invitation.connection,
       };
       dispatch(setPendingJoinGroupMetadata(pendingJoinData));
 
       // Update local state
-      setGroupName(scannedGroupName);
+      setGroupName(newName);
       setStep(SetupProfileStep.GroupSetupConfirm);
 
       // Update persistent storage
-      await Agent.agent.basicStorage.createOrUpdateBasicRecord(
-        new BasicRecord({
-          id: MiscRecordId.PENDING_JOIN_GROUP_METADATA,
-          content: pendingJoinData,
-        })
-      );
+      await Agent.agent.basicStorage
+        .createOrUpdateBasicRecord(
+          new BasicRecord({
+            id: MiscRecordId.PENDING_JOIN_GROUP_METADATA,
+            content: pendingJoinData,
+          })
+        )
+        .catch((e) => {
+          showError("Show error", e);
+        });
     } catch (error) {
-      handleCloseScan();
-      dispatch(setToastMsg(ToastMsgType.SCANNER_ERROR));
+      scanRef.current?.registerScanHandler();
+      dispatch(setToastMsg(ToastMsgType.INVALID_CONNECTION_URL));
     }
   };
 
@@ -484,7 +502,7 @@ export const ProfileSetup = ({
             <PageHeader
               closeButton={!!back}
               closeButtonLabel={back}
-              closeButtonAction={handleCloseScan}
+              closeButtonAction={() => handleCloseScan(true)}
               actionButton={supportMultiCamera}
               actionButtonIcon={repeatOutline}
               actionButtonAction={changeCameraDirection}

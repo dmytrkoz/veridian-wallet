@@ -1,5 +1,9 @@
 import { Operation, Salter, SignifyClient } from "signify-ts";
-import { CredentialMetadataRecord, NotificationStorage } from "../records";
+import {
+  CredentialMetadataRecord,
+  NotificationStorage,
+  OperationPendingRecordType,
+} from "../records";
 import { CredentialShortDetails } from "./credentialService.types";
 import { Agent } from "../agent";
 import { NotificationRoute } from "./keriaNotificationService.types";
@@ -66,6 +70,23 @@ const OnlineOnly = (
   };
 };
 
+const SeedPhraseVerified = (
+  _target: unknown,
+  _propertyKey: string,
+  descriptor: PropertyDescriptor
+) => {
+  const originalMethod = descriptor.value;
+  descriptor.value = async function (...args: unknown[]) {
+    if (await Agent.agent.isVerificationEnforced()) {
+      throw new Error(Agent.SEED_PHRASE_NOT_VERIFIED);
+    }
+    // Call the original method
+    const result = await originalMethod.apply(this, args);
+    await Agent.agent.recordCriticalAction();
+    return result;
+  };
+};
+
 export const deleteNotificationRecordById = async (
   client: SignifyClient,
   notificationStorage: NotificationStorage,
@@ -88,25 +109,32 @@ export const deleteNotificationRecordById = async (
   }
 
   if (notificationRecord?.linkedRequest?.current) {
-    await cleanupPendingOperations(operationPendingStorage, notificationRecord.linkedRequest.current);
+    await cleanupPendingOperations(
+      operationPendingStorage,
+      notificationRecord.linkedRequest.current
+    );
   }
 
   await notificationStorage.deleteById(id);
 };
 
-/**
- * Clean up pending operations related to a notification's linked request
- * @param operationPendingStorage - Storage for pending operations
- * @param linkedRequestCurrent - The current linked request identifier
- */
 async function cleanupPendingOperations(
   operationPendingStorage: OperationPendingStorage,
-  linkedRequestCurrent: string,
+  linkedRequestCurrent: string
 ): Promise<void> {
+  // WARNING: If new operation types are added that support linked requests, they MUST be added here.
   const pendingOperations = await operationPendingStorage.findAllByQuery({
-    filter: {
-      id: { $regex: `^.*\\.${linkedRequestCurrent}$` }
-    }
+    $or: [
+      {
+        id: `${OperationPendingRecordType.ExchangeReceiveCredential}.${linkedRequestCurrent}`,
+      },
+      {
+        id: `${OperationPendingRecordType.ExchangeOfferCredential}.${linkedRequestCurrent}`,
+      },
+      {
+        id: `${OperationPendingRecordType.ExchangePresentCredential}.${linkedRequestCurrent}`,
+      },
+    ],
   });
 
   if (pendingOperations.length === 0) {
@@ -114,10 +142,10 @@ async function cleanupPendingOperations(
   }
 
   const deletePromises = pendingOperations.map(async (operation) => {
-      await operationPendingStorage.deleteById(operation.id);
+    await operationPendingStorage.deleteById(operation.id);
   });
 
-  await Promise.allSettled(deletePromises);
+  await Promise.all(deletePromises);
 }
 
 function randomSalt(): string {
@@ -141,6 +169,7 @@ function isNetworkError(error: Error): boolean {
 
 export {
   OnlineOnly,
+  SeedPhraseVerified,
   waitAndGetDoneOp,
   getCredentialShortDetails,
   randomSalt,

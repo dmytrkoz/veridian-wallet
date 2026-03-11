@@ -1,11 +1,12 @@
+import { Capacitor } from "@capacitor/core";
 import {
   LocalNotifications,
   LocalNotificationSchema,
 } from "@capacitor/local-notifications";
-import { Capacitor } from "@capacitor/core";
 import { TabsRoutePath } from "../../routes/paths";
-import { NotificationPayload } from "./notificationService.types";
 import { showError } from "../../ui/utils/error";
+import { dismissAllModals } from "../../ui/utils/modal";
+import { NotificationPayload } from "./notificationService.types";
 
 const PRIMARY_COLOR =
   getComputedStyle(document.documentElement)
@@ -32,17 +33,19 @@ const CHANNEL_CONFIG = {
   vibration: true,
 };
 
+type ProfileSwitcher = (profileId: string) => Promise<boolean>;
+
 class NotificationService {
-  private profileSwitcher: ((profileId: string) => void) | null = null;
+  private profileSwitcher: ProfileSwitcher | null = null;
   private permissionsGranted = false;
   private pendingNotification: LocalNotificationSchema | null = null;
   private initialized = false;
 
-  async initialize(): Promise<void> {
-    if (this.initialized) return;
+  async initialize(): Promise<boolean> {
+    if (this.initialized) return this.permissionsGranted;
 
     if (!this.isNativeEnvironment()) {
-      return;
+      return this.permissionsGranted;
     }
 
     LocalNotifications.removeAllListeners();
@@ -59,6 +62,7 @@ class NotificationService {
     );
 
     this.initialized = true;
+    return this.permissionsGranted;
   }
 
   private isNativeEnvironment(): boolean {
@@ -70,7 +74,7 @@ class NotificationService {
     }
   }
 
-  setProfileSwitcher(profileSwitcher: (profileId: string) => void) {
+  setProfileSwitcher(profileSwitcher: ProfileSwitcher) {
     this.profileSwitcher = profileSwitcher;
     this.processPendingNotification();
   }
@@ -163,11 +167,15 @@ class NotificationService {
       return;
     }
 
-    this.profileSwitcher(profileId);
-    this.navigateToPath(TabsRoutePath.NOTIFICATIONS);
+    await dismissAllModals();
+
+    const result = await this.profileSwitcher(profileId);
+
+    if (result) {
+      this.navigateToPath(TabsRoutePath.NOTIFICATIONS);
+    }
   }
 
-  // TODO: Implement permissions
   async arePermissionsGranted(): Promise<boolean> {
     const result = await LocalNotifications.checkPermissions();
     const granted = result.display === "granted";

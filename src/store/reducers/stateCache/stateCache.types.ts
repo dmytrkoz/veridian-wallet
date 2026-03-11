@@ -5,7 +5,7 @@ import { PeerConnectSigningEvent } from "../../../core/cardano/walletConnect/pee
 import { ToastMsgType } from "../../../ui/globals/types";
 import { DAppConnection } from "../profileCache";
 
-interface PayloadData<T = any> {
+interface PayloadData<T = unknown> {
   [key: string]: T;
 }
 
@@ -72,9 +72,13 @@ interface StateCacheProps {
   showNoWitnessAlert?: boolean;
   toastMsgs: ToastStackItem[];
   forceInitApp?: number;
-  showLoading?: boolean;
+  showLoading: GlobalLoadingType;
   isSetupProfile?: boolean;
   pendingJoinGroupMetadata: PendingJoinGroupMetadata | null;
+  showVerifySeedPhraseAlert?: boolean;
+  isSyncingData?: boolean;
+  isShowSeedPhraseScreen?: boolean;
+  isInBiometricProcess?: boolean;
 }
 
 enum InitializationPhase {
@@ -83,7 +87,13 @@ enum InitializationPhase {
   PHASE_TWO = "PHASE_TWO",
 }
 
-export { IncomingRequestType, InitializationPhase };
+enum GlobalLoadingType {
+  NONE = "NONE",
+  HIDEBG = "HIDE_BG",
+  SHOWBG = "SHOW_BG",
+}
+
+export { IncomingRequestType, InitializationPhase, GlobalLoadingType };
 
 export type {
   AuthenticationCacheProps,

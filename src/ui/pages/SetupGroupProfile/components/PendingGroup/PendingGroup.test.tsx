@@ -66,7 +66,14 @@ jest.mock("../../../../../core/agent/agent", () => ({
         verifySecret: jest.fn().mockResolvedValue(true),
       },
       basicStorage: {
-        deleteById: jest.fn(),
+        deleteById: jest.fn(() => Promise.resolve(true)),
+        findById: jest.fn(() =>
+          Promise.resolve({
+            content: {
+              syncing: false,
+            },
+          })
+        ),
       },
     },
   },
@@ -144,6 +151,7 @@ describe("Pending group", () => {
           [initiatorGroupProfile.id]: {
             identity: initiatorGroupProfile,
             notifications: [],
+            multisigConnections: [],
           },
         },
         defaultProfile: initiatorGroupProfile.id,
@@ -198,10 +206,6 @@ describe("Pending group", () => {
           EN_TRANSLATIONS.setupgroupprofile.initgroup.setsigner.requiredsigners
         )
       ).toBeVisible();
-
-      await waitFor(() => {
-        expect(getByText(multisignConnection.label)).toBeVisible();
-      });
     });
 
     test("Leave group", async () => {
@@ -275,6 +279,7 @@ describe("Pending group", () => {
           [initiatorGroupProfile.id]: {
             identity: memberGroupProfile,
             notifications: [notificationsFix[3]],
+            multisigConnections: [],
           },
         },
         defaultProfile: initiatorGroupProfile.id,

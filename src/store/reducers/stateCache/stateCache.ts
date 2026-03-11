@@ -7,6 +7,7 @@ import { RootState } from "../../index";
 import {
   AuthenticationCacheProps,
   CurrentRouteCacheProps,
+  GlobalLoadingType,
   IncomingRequestProps,
   InitializationPhase,
   PendingJoinGroupMetadata,
@@ -18,6 +19,7 @@ const initialState: StateCacheProps = {
   recoveryCompleteNoInterruption: false,
   isOnline: false,
   routes: [],
+  showLoading: GlobalLoadingType.NONE,
   authentication: {
     loggedIn: false,
     time: 0,
@@ -171,7 +173,7 @@ const stateCacheSlice = createSlice({
     showGenericError: (state, action: PayloadAction<boolean | undefined>) => {
       state.showGenericError = action.payload;
     },
-    showGlobalLoading: (state, action: PayloadAction<boolean>) => {
+    showGlobalLoading: (state, action: PayloadAction<GlobalLoadingType>) => {
       state.showLoading = action.payload;
     },
     showNoWitnessAlert: (state, action: PayloadAction<boolean | undefined>) => {
@@ -191,6 +193,24 @@ const stateCacheSlice = createSlice({
       action: PayloadAction<PendingJoinGroupMetadata | null>
     ) => {
       state.pendingJoinGroupMetadata = action.payload;
+    },
+    setSeedPhraseVerified: (state, action: PayloadAction<boolean>) => {
+      state.authentication.seedPhraseIsSet = action.payload;
+    },
+    showVerifySeedPhraseAlert: (state, action: PayloadAction<boolean>) => {
+      state.showVerifySeedPhraseAlert = action.payload;
+    },
+    setSsiAgentIsSet: (state, action: PayloadAction<boolean>) => {
+      state.authentication.ssiAgentIsSet = action.payload;
+    },
+    setSyncingData: (state, action: PayloadAction<boolean>) => {
+      state.isSyncingData = action.payload;
+    },
+    setShowSeedPhraseScreen: (state, action: PayloadAction<boolean>) => {
+      state.isShowSeedPhraseScreen = action.payload;
+    },
+    setIsInBiometricProcess: (state, action: PayloadAction<boolean>) => {
+      state.isInBiometricProcess = action.payload;
     },
   },
 });
@@ -221,6 +241,12 @@ const {
   showGlobalLoading,
   setIsSetupProfile,
   setPendingJoinGroupMetadata,
+  setSeedPhraseVerified,
+  showVerifySeedPhraseAlert,
+  setSsiAgentIsSet,
+  setSyncingData,
+  setShowSeedPhraseScreen,
+  setIsInBiometricProcess,
 } = stateCacheSlice.actions;
 
 const getStateCache = (state: RootState) => state.stateCache;
@@ -251,6 +277,13 @@ const getForceInitApp = (state: RootState) => state.stateCache.forceInitApp;
 const getGlobalLoading = (state: RootState) => state.stateCache.showLoading;
 const getShowSetupProfilePage = (state: RootState) =>
   state.stateCache.isSetupProfile;
+const getShowVerifySeedPhraseAlert = (state: RootState) =>
+  state.stateCache.showVerifySeedPhraseAlert;
+const getIsSyncingData = (state: RootState) => state.stateCache.isSyncingData;
+const getIsShowSeedPhrase = (state: RootState) =>
+  state.stateCache.isShowSeedPhraseScreen;
+const getIsInBiometricProcess = (state: RootState) =>
+  state.stateCache.isInBiometricProcess;
 
 export type {
   AuthenticationCacheProps,
@@ -270,6 +303,7 @@ export {
   getGlobalLoading,
   getInitializationPhase,
   getIsOnline,
+  getIsSyncingData,
   getLoginAttempt,
   getQueueIncomingRequest,
   getRecoveryCompleteNoInterruption,
@@ -277,6 +311,7 @@ export {
   getShowCommonError,
   getShowNoWitnessAlert,
   getShowSetupProfilePage,
+  getShowVerifySeedPhraseAlert,
   getStateCache,
   getToastMgs,
   getToastMsgs,
@@ -299,9 +334,17 @@ export {
   setPendingJoinGroupMetadata,
   setQueueIncomingRequest,
   setRecoveryCompleteNoInterruption,
+  setSeedPhraseVerified,
+  setSsiAgentIsSet,
+  setSyncingData,
   setToastMsg,
   showGenericError,
   showGlobalLoading,
   showNoWitnessAlert,
+  showVerifySeedPhraseAlert,
   stateCacheSlice,
+  getIsShowSeedPhrase,
+  setShowSeedPhraseScreen,
+  getIsInBiometricProcess,
+  setIsInBiometricProcess,
 };

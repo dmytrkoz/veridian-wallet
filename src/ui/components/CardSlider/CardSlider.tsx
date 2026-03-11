@@ -60,6 +60,7 @@ const CardSlider = ({
   useEffect(() => {
     if (!swiper) return;
     swiper.slideTo(favouriteIndex, 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swiper]);
 
   const containerClasses = `card-slider ${

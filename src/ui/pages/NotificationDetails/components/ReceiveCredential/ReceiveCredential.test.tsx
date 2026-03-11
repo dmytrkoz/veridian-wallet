@@ -10,18 +10,14 @@ import { KeyStoreKeys } from "../../../../../core/storage";
 import EN_TRANSLATIONS from "../../../../../locales/en/en.json";
 import { TabsRoutePath } from "../../../../../routes/paths";
 import { showGenericError } from "../../../../../store/reducers/stateCache";
-import { connectionsForNotificationsValues } from "../../../../__fixtures__/connectionsFix";
 import { credsFixAcdc } from "../../../../__fixtures__/credsFix";
-import {
-  filteredIdentifierFix,
-  filteredIdentifierMapFix,
-} from "../../../../__fixtures__/filteredIdentifierFix";
+import { filteredIdentifierFix } from "../../../../__fixtures__/filteredIdentifierFix";
 import { identifierFix } from "../../../../__fixtures__/identifierFix";
 import { notificationsFix } from "../../../../__fixtures__/notificationsFix";
+import { profileCacheFixData } from "../../../../__fixtures__/storeDataFix";
+import { makeTestStore } from "../../../../utils/makeTestStore";
 import { passcodeFiller } from "../../../../utils/passcodeFiller";
 import { ReceiveCredential } from "./ReceiveCredential";
-import { makeTestStore } from "../../../../utils/makeTestStore";
-import { profileCacheFixData } from "../../../../__fixtures__/storeDataFix";
 
 jest.useFakeTimers();
 
@@ -251,6 +247,111 @@ describe("Receive credential", () => {
     });
   }, 10000);
 
+  test("Race condition protection: prevents re-fetching while accepting", async () => {
+    const storeMocked = {
+      ...makeTestStore({
+        ...initialState,
+        profilesCache: {
+          ...initialState.profilesCache,
+          profiles: {
+            ...initialState.profilesCache.profiles,
+            [filteredIdentifierFix[2].id]: {
+              ...initialState.profilesCache.profiles[
+                filteredIdentifierFix[2].id
+              ],
+              identity: {
+                ...initialState.profilesCache.profiles[
+                  filteredIdentifierFix[2].id
+                ].identity,
+                groupMemberPre: "member-1",
+              },
+            },
+          },
+        },
+      }),
+      dispatch: dispatchMock,
+    };
+
+    const backMock = jest.fn();
+
+    getAcdcFromIpexGrantMock.mockResolvedValue({
+      ...credsFixAcdc[0],
+      identifierType: IdentifierType.Group,
+      identifierId: filteredIdentifierFix[2].id,
+    });
+
+    // We also need to mock valid response for getLinkedGroupFromIpexGrantMock
+    // so the component doesn't error out before we can test this race condition
+    getLinkedGroupFromIpexGrantMock.mockResolvedValue({
+      threshold: { signingThreshold: 2 },
+      members: ["member-1", "member-2"],
+      othersJoined: ["member-1"],
+      linkedRequest: {
+        accepted: false,
+      },
+    });
+
+    const { getByTestId, getByText, container } = render(
+      <Provider store={storeMocked}>
+        <ReceiveCredential
+          pageId="creadential-request-race"
+          activeStatus
+          handleBack={backMock}
+          notificationDetails={notificationsFix[0]}
+        />
+      </Provider>
+    );
+
+    // 1. Initial fetch should happen
+    await waitFor(() => {
+      expect(getLinkedGroupFromIpexGrantMock).toBeCalledTimes(1);
+    });
+
+    // 2. Clear mock to strictly track new calls
+    getLinkedGroupFromIpexGrantMock.mockClear();
+
+    // 3. Start Acceptance
+    act(() => {
+      fireEvent.click(getByTestId("primary-button-creadential-request-race"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("verify-passcode")).toBeVisible();
+    });
+
+    await passcodeFiller(getByText, getByTestId, "193212");
+
+    // 4. Verify we are in "isAccepting" state (via CSS class)
+    // The component wrapper should have "animation-on" class
+    await waitFor(() => {
+      const page = container.getElementsByClassName(
+        "creadential-request-race-receive-credential"
+      )[0];
+      expect(page).toHaveClass("animation-on");
+    });
+
+    // 5. Simulate a scenario that might trigger fetching (e.g., fast forward time slightly or re-render)
+    // In a real browser, useOnlineStatusEffect properties might change.
+    // Here we ensure that NO new calls to getLinkedGroupFromIpexGrantMock happen immediately.
+
+    // We advance time but NOT enough to finish the accept promise (700ms)
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    // 6. Assert NO new calls occurred
+    expect(getLinkedGroupFromIpexGrantMock).not.toBeCalled();
+
+    // 7. Finish the process
+    act(() => {
+      jest.advanceTimersByTime(500); // Complete the 700ms + buffer
+    });
+
+    await waitFor(() => {
+      expect(admitAcdcFromGrantMock).toBeCalledWith(notificationsFix[0].id);
+    });
+  }, 10000);
+
   test("Open cred detail", async () => {
     const storeMocked = {
       ...makeTestStore(initialState),
@@ -372,6 +473,48 @@ describe("Receive credential", () => {
 
     unmount();
   });
+
+  test("Open relate profile and not show delete button", async () => {
+    const storeMocked = {
+      ...makeTestStore(initialState),
+      dispatch: dispatchMock,
+    };
+
+    getAcdcFromIpexGrantMock.mockResolvedValue({
+      ...credsFixAcdc[0],
+      identifierType: IdentifierType.Individual,
+      identifierId: filteredIdentifierFix[0].id,
+    });
+
+    const { getByText, queryByTestId, getByTestId } = render(
+      <Provider store={storeMocked}>
+        <ReceiveCredential
+          pageId="creadential-request"
+          activeStatus
+          handleBack={jest.fn()}
+          notificationDetails={notificationsFix[0]}
+        />
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        getByText(
+          EN_TRANSLATIONS.tabs.notifications.details.credential.receive
+            .relatedprofile
+        )
+      ).toBeVisible();
+    });
+
+    act(() => {
+      fireEvent.click(getByTestId("related-profile"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("profile-details-page")).toBeVisible();
+      expect(queryByTestId("delete-buttonprofile-details")).toBe(null);
+    });
+  });
 });
 
 describe("Credential request: Multisig", () => {
@@ -443,7 +586,7 @@ describe("Credential request: Multisig", () => {
     });
 
     getLinkedGroupFromIpexGrantMock.mockResolvedValue({
-      threshold: "2",
+      threshold: { signingThreshold: 2 },
       members: ["member-1", "member-2"],
       othersJoined: [],
       linkedRequest: {
@@ -480,10 +623,6 @@ describe("Credential request: Multisig", () => {
           .initiatoracceptedalert
       )
     ).toBeVisible();
-
-    expect(
-      getByText(EN_TRANSLATIONS.tabs.notifications.details.buttons.ok)
-    ).toBeVisible();
   });
 
   test("Hide alert when group initiator accept cred", async () => {
@@ -501,7 +640,7 @@ describe("Credential request: Multisig", () => {
     });
 
     getLinkedGroupFromIpexGrantMock.mockResolvedValue({
-      threshold: "2",
+      threshold: { signingThreshold: 2 },
       members: ["member-1", "member-2"],
       othersJoined: ["member-1"],
       linkedRequest: {
@@ -550,7 +689,7 @@ describe("Credential request: Multisig", () => {
     });
 
     getLinkedGroupFromIpexGrantMock.mockResolvedValue({
-      threshold: "2",
+      threshold: { signingThreshold: 2 },
       members: ["member-1", "member-2", "member-3"],
       othersJoined: ["member-1", "member-2"],
       linkedRequest: {
@@ -592,7 +731,7 @@ describe("Credential request: Multisig", () => {
     });
 
     getLinkedGroupFromIpexGrantMock.mockResolvedValue({
-      threshold: "2",
+      threshold: { signingThreshold: 2 },
       members: ["member-1", "member-2"],
       othersJoined: ["member-1"],
       linkedRequest: {

@@ -6,6 +6,7 @@ import {
 import { IonInput } from "@ionic/react";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
+import { MemoryRouter } from "react-router-dom";
 import EN_Translation from "../../../locales/en/en.json";
 import {
   setMissingAliasConnection,
@@ -24,12 +25,16 @@ import { CustomInputProps } from "../CustomInput/CustomInput.types";
 import { TabsRoutePath } from "../navigation/TabsMenu";
 import { ShareProfile } from "./ShareProfile";
 
+const getOobiMock = jest.fn();
+const dispatchMock = jest.fn();
+
 const connectByOobiUrlMock = jest.fn();
 jest.mock("../../../core/agent/agent", () => ({
   Agent: {
     agent: {
       connections: {
         connectByOobiUrl: (...arg: unknown[]) => connectByOobiUrlMock(...arg),
+        getOobi: (...params: unknown[]) => getOobiMock(...params),
       },
     },
   },
@@ -146,6 +151,8 @@ describe("Share Profile", () => {
 
     isNativePlatformMock.mockImplementation(() => true);
 
+    getOobiMock.mockResolvedValue("oobi");
+
     addListener.mockImplementation(
       (
         eventName: string,
@@ -170,11 +177,13 @@ describe("Share Profile", () => {
 
     const { getByText, getByTestId } = render(
       <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={closeModal}
-        />
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={closeModal}
+            oobi="oobi"
+          />
+        </MemoryRouter>
       </Provider>
     );
 
@@ -215,11 +224,13 @@ describe("Share Profile", () => {
 
     const { getByTestId } = render(
       <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={jest.fn()}
+            oobi="oobi"
+          />
+        </MemoryRouter>
       </Provider>
     );
 
@@ -238,6 +249,69 @@ describe("Share Profile", () => {
       expect(connectByOobiUrlMock).toBeCalledWith(
         barcodes[0].rawValue,
         initialState.profilesCache.defaultProfile
+      );
+    });
+  });
+
+  test("Scan oobi: input group oobi in connection scan", async () => {
+    getPlatformMock.mockImplementation(() => ["ios"]);
+    addListener.mockImplementation(
+      (
+        eventName: string,
+        listenerFunc: (result: BarcodesScannedEvent) => void
+      ) => {
+        setTimeout(() => {
+          listenerFunc({
+            barcodes: [
+              {
+                displayValue:
+                  "http://keria:3902/oobi/EG4zitndqMNRbo3opV6POGv9WGSoUqGm2-uJfeXNGAKD/agent/EMc7yWeHgiaKROAeDWmt-LLDRWthtUo7oS-kLv8LY4jD?name=Leader&groupId=0AD0Su_NNIjm7EfXsUw_9bh6&groupName=Group",
+                format: BarcodeFormat.QrCode,
+                rawValue:
+                  "http://keria:3902/oobi/EG4zitndqMNRbo3opV6POGv9WGSoUqGm2-uJfeXNGAKD/agent/EMc7yWeHgiaKROAeDWmt-LLDRWthtUo7oS-kLv8LY4jD?name=Leader&groupId=0AD0Su_NNIjm7EfXsUw_9bh6&groupName=Group",
+                valueType: BarcodeValueType.Url,
+              },
+            ],
+          });
+        }, 100);
+
+        return {
+          remove: jest.fn(),
+        };
+      }
+    );
+
+    const storeMocked = {
+      ...makeTestStore(initialState),
+      dispatch: dispatchMock,
+    };
+
+    const { getByTestId } = render(
+      <Provider store={storeMocked}>
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={jest.fn()}
+            oobi="oobi"
+          />
+        </MemoryRouter>
+      </Provider>
+    );
+
+    fireEvent(
+      getByTestId("share-profile-segment"),
+      new CustomEvent("ionChange", {
+        detail: { value: "scan" },
+      })
+    );
+
+    await waitFor(() => {
+      expect(getByTestId("scan")).toBeVisible();
+    });
+
+    await waitFor(() => {
+      expect(dispatchMock).toBeCalledWith(
+        setToastMsg(ToastMsgType.INVALID_CONNECTION_URL)
       );
     });
   });
@@ -278,11 +352,13 @@ describe("Share Profile", () => {
 
     const { getByTestId } = render(
       <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={jest.fn()}
+            oobi="oobi"
+          />
+        </MemoryRouter>
       </Provider>
     );
 
@@ -342,11 +418,13 @@ describe("Share Profile", () => {
 
     const { getByTestId } = render(
       <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={jest.fn()}
+            oobi="oobi"
+          />
+        </MemoryRouter>
       </Provider>
     );
 
@@ -363,7 +441,7 @@ describe("Share Profile", () => {
 
     await waitFor(() => {
       expect(dispatchMock).toBeCalledWith(
-        setToastMsg(ToastMsgType.SCANNER_ERROR)
+        setToastMsg(ToastMsgType.INVALID_CONNECTION_URL)
       );
     });
   });
@@ -424,8 +502,6 @@ describe("Share Profile", () => {
         },
       };
     }
-
-    const dispatchMock = jest.fn();
     const storeMocked = {
       ...makeTestStore(state),
       dispatch: dispatchMock,
@@ -433,11 +509,13 @@ describe("Share Profile", () => {
 
     const { getByTestId } = render(
       <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={jest.fn()}
+            oobi="oobi"
+          />
+        </MemoryRouter>
       </Provider>
     );
 
@@ -499,11 +577,13 @@ describe("Share Profile", () => {
 
     const { getByTestId } = render(
       <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
+        <MemoryRouter initialEntries={[TabsRoutePath.CONNECTIONS]}>
+          <ShareProfile
+            isOpen
+            setIsOpen={jest.fn()}
+            oobi="oobi"
+          />
+        </MemoryRouter>
       </Provider>
     );
 

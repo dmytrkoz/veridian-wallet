@@ -1,5 +1,12 @@
 import { IonButton, IonList } from "@ionic/react";
-import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 import InfiniteScroll from "react-infinite-scroll-component";
 import { KeriaNotification } from "../../../../core/agent/services/keriaNotificationService.types";
 import { i18n } from "../../../../i18n";
@@ -11,6 +18,7 @@ import {
 
 const DEFAULT_INITIAL_DISPLAY = 3;
 const DEFAULT_LOAD_MORE = 5;
+const SCROLL_THRESHOLD_PX = 20;
 
 const NotificationSection = forwardRef<
   NotificationSectionRef,
@@ -30,11 +38,13 @@ const NotificationSection = forwardRef<
     ref
   ) => {
     const [displayLength, setDisplayLength] = useState(initialDisplayCount);
+    const [infiniteScrollActivated, setInfiniteScrollActivated] =
+      useState(false);
 
-    const displayNotifications =
-      enableInfiniteScroll && displayLength >= data.length
-        ? data
-        : data.slice(0, displayLength);
+    const displayNotifications = useMemo(() => {
+      if (!enableInfiniteScroll) return data;
+      return data.slice(0, displayLength);
+    }, [data, displayLength, enableInfiniteScroll]);
 
     const shouldDisplayExpandButton =
       enableInfiniteScroll &&
@@ -48,10 +58,35 @@ const NotificationSection = forwardRef<
     }));
 
     const loadMore = useCallback(() => {
-      setDisplayLength((value) => value + loadMoreCount);
-    }, [loadMoreCount]);
+      setInfiniteScrollActivated(true);
+      setDisplayLength((value) => {
+        if (value >= data.length) return value;
+        return value + loadMoreCount;
+      });
+    }, [loadMoreCount, data.length]);
 
-    if (!data.length) return null;
+    useEffect(() => {
+      if (!enableInfiniteScroll || !infiniteScrollActivated) return;
+
+      const container = document.getElementById(`${pageId}-content`);
+      if (!container) return;
+
+      const isScrollable =
+        container.scrollHeight > container.clientHeight + SCROLL_THRESHOLD_PX;
+
+      if (!isScrollable && displayLength < data.length) {
+        loadMore();
+      }
+    }, [
+      displayLength,
+      data.length,
+      enableInfiniteScroll,
+      loadMore,
+      pageId,
+      infiniteScrollActivated,
+    ]);
+
+    if (!data.length && !enableInfiniteScroll) return null;
 
     const content = (
       <IonList
@@ -73,7 +108,9 @@ const NotificationSection = forwardRef<
         className="notifications-tab-section"
         data-testid={testId}
       >
-        <h3 className="notifications-tab-section-title">{title}</h3>
+        {data.length > 0 && (
+          <h3 className="notifications-tab-section-title">{title}</h3>
+        )}
         {enableInfiniteScroll ? (
           <>
             <InfiniteScroll
@@ -81,9 +118,9 @@ const NotificationSection = forwardRef<
               next={loadMore}
               loader={<div></div>}
               hasMore={
-                data.length >= displayLength && !shouldDisplayExpandButton
+                data.length > displayLength && !shouldDisplayExpandButton
               }
-              scrollableTarget={pageId}
+              scrollableTarget={`${pageId}-content`}
             >
               {content}
             </InfiniteScroll>
@@ -98,6 +135,11 @@ const NotificationSection = forwardRef<
                   "tabs.notifications.tab.sections.earlier.buttons.showealier"
                 )}
               </IonButton>
+            )}
+            {displayLength >= data.length && (
+              <p className="notification-empty">
+                {i18n.t("tabs.notifications.tab.sections.earlier.end")}
+              </p>
             )}
           </>
         ) : (

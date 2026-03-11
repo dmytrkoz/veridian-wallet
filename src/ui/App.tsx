@@ -18,19 +18,29 @@ import { i18n } from "../i18n";
 import { Routes } from "../routes";
 import { initializeFreeRASP, ThreatCheck } from "../security/freerasp";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
-import { getShowProfileState } from "../store/reducers/profileCache";
+import {
+  getCurrentProfile,
+  getShowProfileState,
+} from "../store/reducers/profileCache";
 import {
   getGlobalLoading,
   getInitializationPhase,
+  getShowVerifySeedPhraseAlert,
+  getIsSyncingData,
 } from "../store/reducers/stateCache";
-import { InitializationPhase } from "../store/reducers/stateCache/stateCache.types";
+import {
+  GlobalLoadingType,
+  InitializationPhase,
+} from "../store/reducers/stateCache/stateCache.types";
 import { AppOffline } from "./components/AppOffline";
 import { AppWrapper } from "./components/AppWrapper";
 import { ToastStack } from "./components/CustomToast/ToastStack";
 import { GenericError, NoWitnessAlert } from "./components/Error";
 import { InputRequest } from "./components/InputRequest";
 import { ProfileStateModal } from "./components/ProfileStateModal";
+import { SetGroupUserName } from "./components/SetGroupUserName";
 import { SidePage } from "./components/SidePage";
+import { VerifySeedPhraseAlert } from "./components/VerifySeedPhraseAlert";
 import {
   ANDROID_MIN_VERSION,
   IOS_MIN_VERSION,
@@ -46,11 +56,31 @@ import "./styles/style.scss";
 import "./App.scss";
 import { showError } from "./utils/error";
 import { compareVersion } from "./utils/version";
+import { BiometricOverlay } from "./components/Verification/BiometricOverlay";
 
 setupIonicReact();
 
+const SetGroupNameWrapper = () => {
+  const currentProfile = useAppSelector(getCurrentProfile);
+
+  const isGroupProfile =
+    !!currentProfile?.identity.groupMetadata ||
+    !!currentProfile?.identity.groupMemberPre;
+
+  if (
+    !isGroupProfile ||
+    currentProfile.identity.groupMetadata?.proposedUsername ||
+    currentProfile.identity.groupUsername
+  )
+    return;
+
+  return <SetGroupUserName identifier={currentProfile.identity} />;
+};
+
 const InitPhase = ({ initPhase }: { initPhase: InitializationPhase }) => {
   const showProfileState = useAppSelector(getShowProfileState);
+  const showAlert = useAppSelector(getShowVerifySeedPhraseAlert);
+  const isSyncingData = useAppSelector(getIsSyncingData);
 
   switch (initPhase) {
     case InitializationPhase.PHASE_ZERO:
@@ -58,7 +88,9 @@ const InitPhase = ({ initPhase }: { initPhase: InitializationPhase }) => {
     case InitializationPhase.PHASE_ONE:
       return (
         <>
-          <LoadingPage type={LoadingType.Splash} />
+          <LoadingPage
+            type={isSyncingData ? LoadingType.Spin : LoadingType.Splash}
+          />
           <LockPage />
         </>
       );
@@ -72,12 +104,18 @@ const InitPhase = ({ initPhase }: { initPhase: InitializationPhase }) => {
             >
               <IonSpinner name="circular" />
             </div>
-            <div className={`app-router ${showProfileState ? "ion-hide" : ""}`}>
+            <div
+              className={`app-router ${
+                showProfileState || showAlert ? "ion-hide" : ""
+              }`}
+            >
               <Routes />
             </div>
             <ProfileStateModal />
             <LockPage />
+            <NoWitnessAlert />
           </IonReactRouter>
+          <SetGroupNameWrapper />
           <AppOffline />
         </>
       );
@@ -104,9 +142,14 @@ const AppContent = ({
           <InputRequest />
           <SidePage />
           <GenericError />
-          <NoWitnessAlert />
           <ToastStack />
-          {globalLoading && <LoadingPage fullPage />}
+          {globalLoading !== GlobalLoadingType.NONE && (
+            <LoadingPage
+              hideBg={globalLoading === GlobalLoadingType.HIDEBG}
+              fullPage
+            />
+          )}
+          <VerifySeedPhraseAlert />
         </StrictMode>
       </AppWrapper>
     </>
@@ -274,6 +317,7 @@ const App = () => {
   return (
     <IonApp>
       <AppContent isFreeRASPInitialized={isFreeRASPInitialized} />
+      <BiometricOverlay />
     </IonApp>
   );
 };

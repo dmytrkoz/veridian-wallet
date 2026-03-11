@@ -98,6 +98,7 @@ const signifyClient = jest.mocked({
 const identifierStorage = jest.mocked({
   getIdentifierMetadata: jest.fn(),
   getUserFacingIdentifierRecords: jest.fn(),
+  getIdentifierRecords: jest.fn(),
   getAllIdentifiers: jest.fn(),
   updateIdentifierMetadata: jest.fn(),
   createIdentifierMetadataRecord: jest.fn(),
@@ -170,7 +171,9 @@ const archivedMetadataRecord = new CredentialMetadataRecord({
 describe("Credential service of agent", () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValue(true);
   });
+
   test("can get all credentials", async () => {
     credentialStorage.getAllCredentialMetadata = jest
       .fn()
@@ -261,7 +264,6 @@ describe("Credential service of agent", () => {
   });
 
   test("get acdc credential details successfully record by id", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     credentialStorage.getCredentialMetadata = jest
       .fn()
       .mockResolvedValue(credentialMetadataRecordA);
@@ -348,14 +350,15 @@ describe("Credential service of agent", () => {
     );
   });
 
-  test("Should throw an error when KERIA is offline ", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(false);
-    await expect(
-      credentialService.getCredentialDetailsById("not-found-id")
-    ).rejects.toThrowError(Agent.KERIA_CONNECTION_BROKEN);
-  });
-
   test("Can sync ACDCs from KERIA to local", async () => {
+    // Mock identifiers that will be used in the filter
+    identifierStorage.getIdentifierRecords = jest
+      .fn()
+      .mockResolvedValue([
+        { id: "EGrdtLIlSIQHF1gHhE7UVfs9yRF-EDhqtLT41pJlj_z8" },
+        { id: "EFr4DyYerYKgdUq3Nw5wbq7OjEZT6cn45omHCiIZ0elD" },
+      ]);
+
     credentialListMock
       .mockReturnValueOnce([
         {
@@ -469,9 +472,233 @@ describe("Credential service of agent", () => {
     );
   });
 
+  test("Should not sync any credentials records if we have no identifiers", async () => {
+    identifierStorage.getIdentifierRecords = jest.fn().mockResolvedValue([]);
+    credentialListMock = jest.fn();
+
+    await credentialService.syncKeriaCredentials();
+
+    expect(identifierStorage.getIdentifierRecords).toHaveBeenCalled();
+    expect(credentialListMock).not.toHaveBeenCalled();
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).not.toHaveBeenCalled();
+  });
+
+  test("Should filter out credentials in TypeScript where we are not the issuee", async () => {
+    const localIdentifier = {
+      id: "EGrdtLIlSIQHF1gHhE7UVfs9yRF-EDhqtLT41pJlj_z8",
+    };
+    identifierStorage.getIdentifierRecords = jest
+      .fn()
+      .mockResolvedValue([localIdentifier]);
+
+    // KERIA returns credentials including one where we are NOT the issuee (chained ACDC)
+    const credentialsFromKeria = [
+      {
+        sad: {
+          d: "local-credential",
+          i: "issuer1",
+          ri: "registry1",
+          s: "schema1",
+          a: {
+            i: localIdentifier.id,
+            dt: "2023-11-29T02:13:34.858000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-1", title: "Legal Entity vLEI" },
+      },
+      {
+        sad: {
+          d: "chained-acdc-not-local",
+          i: "issuer2",
+          ri: "registry2",
+          s: "schema2",
+          a: {
+            i: "EDifferentIdentifier_NotLocal_ChainedACDC",
+            dt: "2023-11-29T02:14:00.000000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-2", title: "QVI vLEI Credential" },
+      },
+    ];
+
+    credentialListMock
+      .mockResolvedValueOnce(credentialsFromKeria)
+      .mockResolvedValueOnce([]);
+    credentialStorage.getAllCredentialMetadata = jest
+      .fn()
+      .mockResolvedValue([]);
+    identifiersGetMock.mockResolvedValue(hab);
+    credentialStateMock.mockResolvedValue({ et: Ilks.iss });
+
+    await credentialService.syncKeriaCredentials();
+
+    // Should only sync local credential, NOT the chained ACDC
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).toHaveBeenCalledTimes(1);
+    expect(credentialStorage.saveCredentialMetadataRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "local-credential",
+        identifierId: localIdentifier.id,
+      })
+    );
+    // Should NOT have synced the chained ACDC
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "chained-acdc-not-local",
+      })
+    );
+  });
+
+  test("Should filter credentials in TypeScript for multiple identifiers", async () => {
+    const localIdentifiers = [
+      { id: "EGrdtLIlSIQHF1gHhE7UVfs9yRF-EDhqtLT41pJlj_z8" },
+      { id: "EFr4DyYerYKgdUq3Nw5wbq7OjEZT6cn45omHCiIZ0elD" },
+    ];
+    identifierStorage.getIdentifierRecords = jest
+      .fn()
+      .mockResolvedValue(localIdentifiers);
+
+    // KERIA returns mixed credentials
+    const credentialsFromKeria = [
+      {
+        sad: {
+          d: "cred-for-first-id",
+          i: "issuer1",
+          ri: "registry1",
+          s: "schema1",
+          a: {
+            i: localIdentifiers[0].id,
+            dt: "2023-11-29T02:13:34.858000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-1", title: "Credential Type 1" },
+      },
+      {
+        sad: {
+          d: "cred-for-second-id",
+          i: "issuer2",
+          ri: "registry2",
+          s: "schema2",
+          a: {
+            i: localIdentifiers[1].id,
+            dt: "2023-11-29T02:14:00.000000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-2", title: "Credential Type 2" },
+      },
+      {
+        sad: {
+          d: "cred-not-local",
+          i: "issuer3",
+          ri: "registry3",
+          s: "schema3",
+          a: {
+            i: "ESomeOtherIdentifier_NotInWallet",
+            dt: "2023-11-29T02:15:00.000000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-3", title: "Credential Not Local" },
+      },
+    ];
+
+    credentialListMock
+      .mockResolvedValueOnce(credentialsFromKeria)
+      .mockResolvedValueOnce([]);
+    credentialStorage.getAllCredentialMetadata = jest
+      .fn()
+      .mockResolvedValue([]);
+    identifiersGetMock.mockResolvedValue(hab);
+    credentialStateMock.mockResolvedValue({ et: Ilks.iss });
+
+    await credentialService.syncKeriaCredentials();
+
+    // Should sync both local credentials, but NOT the one that's not local
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).toHaveBeenCalledTimes(2);
+    expect(credentialStorage.saveCredentialMetadataRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cred-for-first-id" })
+    );
+    expect(credentialStorage.saveCredentialMetadataRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cred-for-second-id" })
+    );
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cred-not-local" })
+    );
+  });
+
+  test("Should not sync credentials that already exist locally", async () => {
+    const localIdentifiers = [
+      { id: "EGrdtLIlSIQHF1gHhE7UVfs9yRF-EDhqtLT41pJlj_z8" },
+    ];
+    identifierStorage.getIdentifierRecords = jest
+      .fn()
+      .mockResolvedValue(localIdentifiers);
+
+    const credentialsFromKeria = [
+      {
+        sad: {
+          d: "cred-already-local",
+          i: "issuer1",
+          ri: "registry1",
+          s: "schema1",
+          a: {
+            i: localIdentifiers[0].id,
+            dt: "2023-11-29T02:13:34.858000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-1", title: "Credential Type 1" },
+      },
+      {
+        sad: {
+          d: "cred-new",
+          i: "issuer2",
+          ri: "registry2",
+          s: "schema2",
+          a: {
+            i: localIdentifiers[0].id,
+            dt: "2023-11-29T02:14:00.000000+00:00",
+          },
+        },
+        schema: { $id: "schema-id-2", title: "Credential Type 2" },
+      },
+    ];
+
+    credentialListMock
+      .mockResolvedValueOnce(credentialsFromKeria)
+      .mockResolvedValueOnce([]);
+    // First credential already exists locally
+    credentialStorage.getAllCredentialMetadata = jest
+      .fn()
+      .mockResolvedValue([{ id: "cred-already-local" }]);
+    identifiersGetMock.mockResolvedValue(hab);
+    credentialStateMock.mockResolvedValue({ et: Ilks.iss });
+
+    await credentialService.syncKeriaCredentials();
+
+    // Should only sync the new credential
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).toHaveBeenCalledTimes(1);
+    expect(credentialStorage.saveCredentialMetadataRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cred-new" })
+    );
+    expect(
+      credentialStorage.saveCredentialMetadataRecord
+    ).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cred-already-local" })
+    );
+  });
+
   test("Must throw 'Credential with given SAID not found on KERIA' when there's no KERI credential", async () => {
     const id = "not-found-id";
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     credentialStorage.getCredentialMetadata = jest
       .fn()
       .mockResolvedValue(credentialMetadataRecordA);
@@ -486,7 +713,6 @@ describe("Credential service of agent", () => {
 
   test("Should throw error if other error occurs with get credential in cloud", async () => {
     const id = "not-found-id";
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     credentialStorage.getCredentialMetadata = jest
       .fn()
       .mockResolvedValue(credentialMetadataRecordA);
@@ -508,7 +734,6 @@ describe("Credential service of agent", () => {
   });
 
   test("cannot mark credential as confirmed if metadata is missing", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     identifierStorage.getIdentifierMetadata = jest.fn().mockResolvedValue({
       id: "id",
@@ -530,7 +755,6 @@ describe("Credential service of agent", () => {
   });
 
   test("Can mark credential as confirmed", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     identifierStorage.getIdentifierMetadata = jest.fn().mockResolvedValue({
       id: "id",
@@ -568,7 +792,6 @@ describe("Credential service of agent", () => {
   });
 
   test("Can mark credential as revoked", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     identifierStorage.getIdentifierMetadata = jest.fn().mockResolvedValue({
       id: "id",
@@ -602,7 +825,6 @@ describe("Credential service of agent", () => {
   });
 
   test("Should throw CREDENTIAL_NOT_READY_ON_KERIA when credential fetch fails with 404 after retries", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     const pendingCredentialMock = {
       id: "id",
@@ -628,7 +850,6 @@ describe("Credential service of agent", () => {
   });
 
   test("Should propagate 500 errors immediately without retry", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     const pendingCredentialMock = {
       id: "id",
@@ -654,7 +875,6 @@ describe("Credential service of agent", () => {
   });
 
   test("Should confirm credential after retry succeeds on second attempt", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     const pendingCredentialMock = {
       id: "id",
@@ -684,7 +904,6 @@ describe("Credential service of agent", () => {
   });
 
   test("Should not call credentials().get() when marking as REVOKED", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     const id = "uuid";
     const pendingCredentialMock = {
       id: "id",
@@ -746,6 +965,7 @@ describe("Credential service of agent", () => {
 
     expect(credentialStorage.getCredentialMetadata).toBeCalledWith(credId);
     expect(credentialStorage.deleteCredentialMetadata).not.toBeCalled();
+    expect(credentialStorage.deleteCredentialMetadata).toHaveBeenCalledTimes(0);
   });
 
   test("should delele the credential and delete credential", async () => {
@@ -763,6 +983,7 @@ describe("Credential service of agent", () => {
     expect(credentialStorage.deleteCredentialMetadata).toHaveBeenCalledWith(
       "test-credential-id"
     );
+    expect(credentialStorage.deleteCredentialMetadata).toHaveBeenCalledTimes(1);
   });
 
   test("should delete local credential if delete from signify throws a 404 error", async () => {
@@ -782,6 +1003,7 @@ describe("Credential service of agent", () => {
     expect(credentialStorage.deleteCredentialMetadata).toHaveBeenCalledWith(
       "test-credential-id"
     );
+    expect(credentialStorage.deleteCredentialMetadata).toHaveBeenCalledTimes(1);
   });
 
   test("should throw an error if delete from signify throws a non-404 error", async () => {
@@ -800,10 +1022,10 @@ describe("Credential service of agent", () => {
 
     expect(deleteCredentialMock).toHaveBeenCalledWith(mockMetadata.id);
     expect(credentialStorage.deleteCredentialMetadata).not.toHaveBeenCalled();
+    expect(credentialStorage.deleteCredentialMetadata).toHaveBeenCalledTimes(0);
   });
 
   test("Should retrieve pending deletions and delete each by ID", async () => {
-    Agent.agent.getKeriaOnlineStatus = jest.fn().mockReturnValueOnce(true);
     credentialStorage.deleteCredentialMetadata = jest
       .fn()
       .mockResolvedValueOnce(undefined)

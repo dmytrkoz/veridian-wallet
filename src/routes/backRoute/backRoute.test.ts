@@ -1,5 +1,8 @@
 import { RootState } from "../../store";
-import { InitializationPhase } from "../../store/reducers/stateCache/stateCache.types";
+import {
+  GlobalLoadingType,
+  InitializationPhase,
+} from "../../store/reducers/stateCache/stateCache.types";
 import { DataProps } from "../nextRoute/nextRoute.types";
 import { calcPreviousRoute, getBackRoute, getPreviousRoute } from "./backRoute";
 
@@ -35,6 +38,7 @@ describe("getBackRoute", () => {
         isOnline: true,
         initializationPhase: InitializationPhase.PHASE_TWO,
         recoveryCompleteNoInterruption: false,
+        showLoading: GlobalLoadingType.NONE,
         routes: [{ path: "/route1" }, { path: "/route2" }, { path: "/route3" }],
         authentication: {
           passcodeIsSet: true,
@@ -96,30 +100,6 @@ describe("getBackRoute", () => {
 
     expect(result.backPath).toEqual({ pathname: "/route2" });
     expect(result.updateRedux).toHaveLength(0);
-  });
-
-  test("should return the correct back path when currentPath is /generateseedphrase", () => {
-    const currentPath = "/generateseedphrase";
-    const data: DataProps = {
-      store: storeMock as unknown as RootState,
-    };
-
-    const result = getBackRoute(currentPath, data);
-
-    expect(result.backPath).toEqual({ pathname: "/route2" });
-    expect(result.updateRedux).toHaveLength(3);
-  });
-
-  test("should return the correct back path when currentPath is /verifyseedphrase", () => {
-    const currentPath = "/verifyseedphrase";
-    const data: DataProps = {
-      store: storeMock as unknown as RootState,
-    };
-
-    const result = getBackRoute(currentPath, data);
-
-    expect(result.backPath).toEqual({ pathname: "/route2" });
-    expect(result.updateRedux).toHaveLength(2);
   });
 
   test("should return the correct back path when currentPath is /setpasscode", () => {

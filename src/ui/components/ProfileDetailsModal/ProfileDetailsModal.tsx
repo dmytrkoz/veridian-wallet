@@ -16,6 +16,7 @@ import "../../components/CardDetails/CardDetails.scss";
 import { BackEventPriorityType, ToastMsgType } from "../../globals/types";
 import { useOnlineStatusEffect } from "../../hooks";
 import { useProfile } from "../../hooks/useProfile";
+import { RotateKeyModal } from "../../pages/Home/components/RotateKeyModal";
 import { showError } from "../../utils/error";
 import { combineClassNames } from "../../utils/style";
 import { Alert } from "../Alert";
@@ -46,30 +47,15 @@ const ProfileDetailsModal = ({
   const [alertIsOpen, setAlertIsOpen] = useState(false);
   const [verifyIsOpen, setVerifyIsOpen] = useState(false);
   const [profile, setProfile] = useState<IdentifierDetailsCore | undefined>();
-  const [oobi, setOobi] = useState("");
   const [cloudError, setCloudError] = useState(false);
   const [hidden, setHidden] = useState(false);
+  const [openRotateKeyModal, setOpenRotateKeyModal] = useState(false);
   const { setRecentProfileAsDefault, defaultProfile, defaultName } =
     useProfile();
 
   const handleClose = useCallback(() => {
     setIsOpen(false);
   }, [setIsOpen]);
-
-  const fetchOobi = useCallback(async () => {
-    try {
-      if (!profile?.id || !isOpen) return;
-
-      const oobiValue = await Agent.agent.connections.getOobi(`${profile.id}`, {
-        alias: profile.displayName,
-      });
-      if (oobiValue) {
-        setOobi(oobiValue);
-      }
-    } catch (e) {
-      showError("Unable to fetch oobi", e, dispatch);
-    }
-  }, [profile?.id, profile?.displayName, dispatch, isOpen]);
 
   const getDetails = useCallback(async () => {
     if (!profileId || !isOpen) return;
@@ -94,16 +80,12 @@ const ProfileDetailsModal = ({
   }, [profileId, dispatch, isOpen, handleClose, showProfiles]);
 
   useOnlineStatusEffect(getDetails);
-  useOnlineStatusEffect(fetchOobi);
 
   useIonViewWillEnter(() => {
     dispatch(setCurrentRoute({ path: history.location.pathname }));
   });
 
   const handleDelete = async () => {
-    handleClose();
-    setHidden(true);
-
     try {
       setVerifyIsOpen(false);
       const filterId = profile
@@ -112,9 +94,19 @@ const ProfileDetailsModal = ({
         ? profileId
         : undefined;
 
+      setHidden(true);
       await deleteIdentifier();
       if (defaultProfile?.identity.id === filterId) {
-        await setRecentProfileAsDefault();
+        const nextIdentifier = await setRecentProfileAsDefault();
+        // If the user upgrades to app version 1.2 and, after deleting a profile,
+        // the next profile is a group profile without a username, then close the profiles screen and display the “set profile name” screen.
+        const isGroup =
+          !!nextIdentifier?.groupMetadata || !!nextIdentifier?.groupMemberPre;
+        if (isGroup && !nextIdentifier.groupUsername) {
+          setIsOpen(false, true);
+        } else {
+          handleClose();
+        }
       }
       dispatch(setToastMsg(ToastMsgType.IDENTIFIER_DELETED));
       dispatch(removeProfile(filterId || ""));
@@ -163,12 +155,17 @@ const ProfileDetailsModal = ({
     "ion-hide": hidden,
   });
 
+  const openRotateModal = useCallback(() => {
+    setOpenRotateKeyModal(true);
+  }, []);
+
   return (
     <>
       <SideSlider
         isOpen={isOpen}
         renderAsModal
         className="profile-detail-modal"
+        onClose={() => setIsOpen(false)}
       >
         {cloudError ? (
           <CloudError
@@ -212,8 +209,9 @@ const ProfileDetailsModal = ({
               <div className="card-details-content">
                 <ProfileContent
                   cardData={profile as IdentifierDetailsCore}
-                  oobi={oobi}
                   setCardData={setProfile}
+                  onRotateKey={openRotateModal}
+                  onAfterScan={() => setIsOpen(false, true)}
                 />
                 {!restrictedOptions && (
                   <PageFooter
@@ -257,6 +255,13 @@ const ProfileDetailsModal = ({
           setVerifyIsOpen(value);
         }}
         onVerify={handleDelete}
+      />
+      <RotateKeyModal
+        identifierId={profileId}
+        onReloadData={getDetails}
+        signingKey={profile?.k[0] || ""}
+        isOpen={openRotateKeyModal}
+        onClose={() => setOpenRotateKeyModal(false)}
       />
     </>
   );

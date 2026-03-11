@@ -120,10 +120,25 @@
       .textarea-wrapper::after {
         overflow: hidden;
         padding: 0.875rem 1.25rem !important;
+        color: var(--ion-color-neutral-700);
+
+        &::placeholder {
+          color: var(--ion-color-neutral-400);
+        }
+      }
+
+      &.error {
+        border-width: 2px;
+        border-color: var(--ion-color-danger);
       }
 
       &.has-focus {
-        border-color: var(--ion-color-neutral-700);
+        border-width: 2px;
+        border-color: var(--ion-color-primary-700);
+
+        &.error {
+          border-color: var(--ion-color-danger);
+        }
       }
     }
 

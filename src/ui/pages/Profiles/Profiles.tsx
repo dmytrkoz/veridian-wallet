@@ -6,16 +6,19 @@ import {
   settingsOutline,
 } from "ionicons/icons";
 import { useEffect, useRef, useState } from "react";
-import { CreationStatus } from "../../../core/agent/agent.types";
+import { Agent } from "../../../core/agent/agent";
+import { CreationStatus, MiscRecordId } from "../../../core/agent/agent.types";
 import { IdentifierShortDetails } from "../../../core/agent/services/identifier.types";
 import { i18n } from "../../../i18n";
 import { RoutePath } from "../../../routes";
+import { TabsRoutePath } from "../../../routes/paths";
 import { useAppDispatch, useAppSelector } from "../../../store/hooks";
 import { getProfiles } from "../../../store/reducers/profileCache";
 import { setToastMsg } from "../../../store/reducers/stateCache";
 import { ScrollablePageLayout } from "../../components/layout/ScrollablePageLayout";
 import { PageHeader } from "../../components/PageHeader";
 import { ProfileDetailsModal } from "../../components/ProfileDetailsModal";
+import { SetGroupUserName } from "../../components/SetGroupUserName";
 import { Settings } from "../../components/Settings";
 import { SideSlider } from "../../components/SideSlider";
 import { ToastMsgType } from "../../globals/types";
@@ -65,6 +68,8 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
   const [openProfileDetail, setOpenProfileDetail] = useState(false);
   const [openSetupProfile, setOpenSetupProfile] = useState(false);
   const [isJoinGroupMode, setIsJoinGroupMode] = useState(false);
+  const [missingNameIdentifier, setMissingNameIdentifier] =
+    useState<IdentifierShortDetails>();
   const isOpenFromDetail = useRef(false);
 
   const handleClose = () => {
@@ -95,12 +100,27 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
   };
 
   const handleSelectProfile = async (profile: IdentifierShortDetails) => {
+    const isGroupProfile = !!(profile.groupMemberPre || profile.groupMetadata);
+    if (
+      isGroupProfile &&
+      (profile.groupMemberPre
+        ? !profile.groupUsername
+        : !profile.groupMetadata?.proposedUsername)
+    ) {
+      setMissingNameIdentifier(profile);
+      return;
+    }
+
     try {
       await updateDefaultProfile(profile.id);
       dispatch(setToastMsg(ToastMsgType.PROFILE_SWITCHED));
       handleClose();
       if (isOpenFromDetail.current) {
         setOpenProfileDetail(false);
+      }
+
+      if (!isGroupProfile || profile.groupMemberPre) {
+        ionHistory.push(TabsRoutePath.HOME);
       }
     } catch (e) {
       showError(
@@ -113,32 +133,46 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
   };
 
   useEffect(() => {
-    if (!defaultProfile) {
-      setIsJoinGroupMode(false);
-      setOpenSetupProfile(true);
-    }
-
-    const isGroup =
-      !!defaultProfile?.identity.groupMetadata ||
-      !!defaultProfile?.identity.groupMemberPre;
-    const isCreated =
-      defaultProfile?.identity.creationStatus === CreationStatus.COMPLETE &&
-      !!defaultProfile?.identity.groupMemberPre;
-    const isPendingOrFailedOnKeria =
-      defaultProfile &&
-      [CreationStatus.PENDING, CreationStatus.FAILED].includes(
-        defaultProfile?.identity.creationStatus
-      ) &&
-      !defaultProfile?.identity.groupMemberPre;
-
-    if (isGroup && !isPendingOrFailedOnKeria && !isCreated) {
-      ionHistory.push(
-        RoutePath.GROUP_PROFILE_SETUP.replace(
-          ":id",
-          defaultProfile?.identity.id
-        )
+    async function showSetupProfileScreen() {
+      const recoveryStatus = await Agent.agent.basicStorage.findById(
+        MiscRecordId.CLOUD_RECOVERY_STATUS
       );
+
+      const isSyncing = recoveryStatus?.content?.syncing;
+
+      if (isSyncing) {
+        return;
+      }
+
+      if (!defaultProfile) {
+        setIsJoinGroupMode(false);
+        setOpenSetupProfile(true);
+      }
+
+      const isGroup =
+        !!defaultProfile?.identity.groupMetadata ||
+        !!defaultProfile?.identity.groupMemberPre;
+      const isCreated =
+        defaultProfile?.identity.creationStatus === CreationStatus.COMPLETE &&
+        !!defaultProfile?.identity.groupMemberPre;
+      const isPendingOrFailedOnKeria =
+        defaultProfile &&
+        [CreationStatus.PENDING, CreationStatus.FAILED].includes(
+          defaultProfile?.identity.creationStatus
+        ) &&
+        !defaultProfile?.identity.groupMemberPre;
+
+      if (isGroup && !isPendingOrFailedOnKeria && !isCreated) {
+        ionHistory.push(
+          RoutePath.GROUP_PROFILE_SETUP.replace(
+            ":id",
+            defaultProfile?.identity.id
+          )
+        );
+      }
     }
+
+    showSetupProfileScreen();
   }, [defaultProfile, ionHistory]);
 
   const isDisableManageProfile = () => {
@@ -158,6 +192,19 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
     );
   };
 
+  const handleCloseMissing = (newProfile?: IdentifierShortDetails) => {
+    if (newProfile) {
+      handleSelectProfile(newProfile);
+    }
+
+    setMissingNameIdentifier(undefined);
+  };
+
+  const handleToogleDetail = (value: boolean, closeProfiles?: boolean) => {
+    setOpenProfileDetail(value);
+    setIsOpen(!closeProfiles);
+  };
+
   return (
     <>
       <IonModal
@@ -166,60 +213,67 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
         isOpen={isOpen}
         onDidDismiss={handleClose}
       >
-        <ScrollablePageLayout
-          pageId={componentId}
-          activeStatus={isOpen}
-          header={
-            <PageHeader
-              closeButton={true}
-              closeButtonAction={handleClose}
-              closeButtonLabel={`${i18n.t("profiles.cancel")}`}
-              title={`${i18n.t("profiles.title")}`}
-            />
-          }
-          footer={
-            <OptionButton
-              icon={settingsOutline}
-              text={`${i18n.t("profiles.options.settings")}`}
-              action={handleOpenSettings}
-            />
-          }
-        >
-          <div className="profiles-selected-profile">
-            <ProfileItem identifier={defaultProfile?.identity} />
-            <OptionButton
-              icon={personCircleOutline}
-              text={`${i18n.t("profiles.options.manage")}`}
-              action={handleOpenProfile}
-              disabled={isDisableManageProfile()}
-            />
-          </div>
-          <div className="profiles-list">
-            {filteredProfiles.map((identifier) => (
-              <ProfileItem
-                key={identifier.identity.id}
-                identifier={identifier.identity}
-                onClick={() => {
-                  handleSelectProfile(identifier.identity);
-                }}
+        {missingNameIdentifier ? (
+          <SetGroupUserName
+            identifier={missingNameIdentifier}
+            onClose={handleCloseMissing}
+          />
+        ) : (
+          <ScrollablePageLayout
+            pageId={componentId}
+            activeStatus={isOpen}
+            header={
+              <PageHeader
+                closeButton={true}
+                closeButtonAction={handleClose}
+                closeButtonLabel={`${i18n.t("profiles.cancel")}`}
+                title={`${i18n.t("profiles.title")}`}
               />
-            ))}
-          </div>
-          <div className="profiles-options">
-            <div className="profiles-options-button secondary-button">
+            }
+            footer={
               <OptionButton
-                icon={addCircleOutline}
-                text={`${i18n.t("profiles.options.add")}`}
-                action={handleAddProfile}
+                icon={settingsOutline}
+                text={`${i18n.t("profiles.options.settings")}`}
+                action={handleOpenSettings}
               />
+            }
+          >
+            <div className="profiles-selected-profile">
+              <ProfileItem identifier={defaultProfile?.identity} />
               <OptionButton
-                icon={peopleCircleOutline}
-                text={`${i18n.t("profiles.options.join")}`}
-                action={handleJoinGroup}
+                icon={personCircleOutline}
+                text={`${i18n.t("profiles.options.manage")}`}
+                action={handleOpenProfile}
+                disabled={isDisableManageProfile()}
               />
             </div>
-          </div>
-        </ScrollablePageLayout>
+            <div className="profiles-list">
+              {filteredProfiles.map((identifier) => (
+                <ProfileItem
+                  key={identifier.identity.id}
+                  identifier={identifier.identity}
+                  onClick={() => {
+                    handleSelectProfile(identifier.identity);
+                  }}
+                />
+              ))}
+            </div>
+            <div className="profiles-options">
+              <div className="profiles-options-button secondary-button">
+                <OptionButton
+                  icon={addCircleOutline}
+                  text={`${i18n.t("profiles.options.add")}`}
+                  action={handleAddProfile}
+                />
+                <OptionButton
+                  icon={peopleCircleOutline}
+                  text={`${i18n.t("profiles.options.join")}`}
+                  action={handleJoinGroup}
+                />
+              </div>
+            </div>
+          </ScrollablePageLayout>
+        )}
       </IonModal>
       <Settings
         show={openSetting}
@@ -229,6 +283,7 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
         isOpen={openSetupProfile}
         renderAsModal
         animation={false}
+        onClose={handleCloseSetupProfile}
       >
         <ProfileSetup
           onClose={(cancel) => {
@@ -244,7 +299,7 @@ const Profiles = ({ isOpen, setIsOpen }: ProfilesProps) => {
       <ProfileDetailsModal
         pageId="profile-details"
         isOpen={openProfileDetail}
-        setIsOpen={setOpenProfileDetail}
+        setIsOpen={handleToogleDetail}
         profileId={defaultProfile?.identity.id || ""}
         showProfiles={(value) => {
           setIsOpen(value);

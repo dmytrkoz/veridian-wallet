@@ -1,5 +1,5 @@
 import { repeatOutline } from "ionicons/icons";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { i18n } from "../../../../i18n";
 import { CustomInput } from "../../../components/CustomInput";
 import { ErrorMessage } from "../../../components/ErrorMessage";
@@ -8,10 +8,10 @@ import { OptionModal } from "../../../components/OptionsModal";
 import { PageFooter } from "../../../components/PageFooter";
 import { PageHeader } from "../../../components/PageHeader";
 import { Scan } from "../../../components/Scan";
+import { useCameraDirection } from "../../../components/Scan/hook/useCameraDirection";
 import { combineClassNames } from "../../../utils/style";
 import { isValidHttpUrl } from "../../../utils/urlChecker";
 import { CurrentPage, SSIScanProps } from "../CreateSSIAgent.types";
-import { useCameraDirection } from "../../../components/Scan/hook/useCameraDirection";
 
 const InputError = ({
   showError,
@@ -27,7 +27,12 @@ const InputError = ({
   );
 };
 
-const SSIScan = ({ setCurrentPage, onScanFinish, isLoading }: SSIScanProps) => {
+const SSIScan = ({
+  setCurrentPage,
+  onScanFinish,
+  isLoading,
+  isRecovery,
+}: SSIScanProps) => {
   const pageId = "ssi-agent-scan";
   const { cameraDirection, changeCameraDirection, supportMultiCamera } =
     useCameraDirection();
@@ -35,13 +40,10 @@ const SSIScan = ({ setCurrentPage, onScanFinish, isLoading }: SSIScanProps) => {
   const [isOpen, setOpen] = useState(false);
   const [touched, setTouched] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      setOpen(false);
-    };
-  }, []);
+  const setOpenModal = (value: boolean) => {
+    setOpen(value);
+  };
 
-  const closeInputManualValue = () => setOpen(false);
   const [pastedValue, setPastedValue] = useState("");
 
   const getErrorMessage = () => {
@@ -50,9 +52,21 @@ const SSIScan = ({ setCurrentPage, onScanFinish, isLoading }: SSIScanProps) => {
     return "";
   };
 
+  const closeInputManualValue = () => {
+    setOpen(false);
+    setPastedValue("");
+    setTouched(false);
+  };
+
   const handleConfirm = () => {
     if (!pastedValue || !isValidHttpUrl(pastedValue)) return;
     onScanFinish(pastedValue);
+  };
+
+  const handleChangeFocus = (value: boolean) => {
+    if (!value) {
+      setTouched(true);
+    }
   };
 
   return (
@@ -80,16 +94,20 @@ const SSIScan = ({ setCurrentPage, onScanFinish, isLoading }: SSIScanProps) => {
           hiddenDefaultPasteValueButton
         />
         <PageFooter
-          primaryButtonAction={() => setOpen(true)}
+          primaryButtonAction={() => {
+            setOpenModal(true);
+          }}
           primaryButtonText={`${i18n.t(
             "ssiagent.scanssi.scan.button.entermanual"
           )}`}
           tertiaryButtonAction={() =>
             setCurrentPage(CurrentPage.AdvancedSetting)
           }
-          tertiaryButtonText={`${i18n.t(
-            "ssiagent.scanssi.scan.button.advancedsetup"
-          )}`}
+          tertiaryButtonText={
+            isRecovery
+              ? undefined
+              : `${i18n.t("ssiagent.scanssi.scan.button.advancedsetup")}`
+          }
         />
       </ResponsivePageLayout>
       <OptionModal
@@ -99,13 +117,15 @@ const SSIScan = ({ setCurrentPage, onScanFinish, isLoading }: SSIScanProps) => {
           pageId + "-input-modal",
           isLoading ? "loading" : undefined
         )}
+        onDismiss={closeInputManualValue}
+        backdropDismiss
         header={{
           closeButton: true,
           closeButtonAction: closeInputManualValue,
           closeButtonLabel: `${i18n.t("ssiagent.scanssi.scan.modal.cancel")}`,
           title: `${i18n.t("ssiagent.scanssi.scan.modal.title")}`,
           actionButton: true,
-          actionButtonDisabled: !pastedValue,
+          actionButtonDisabled: !pastedValue || !!getErrorMessage(),
           actionButtonAction: handleConfirm,
           actionButtonLabel: `${i18n.t("ssiagent.scanssi.scan.modal.confirm")}`,
         }}
@@ -116,7 +136,9 @@ const SSIScan = ({ setCurrentPage, onScanFinish, isLoading }: SSIScanProps) => {
           onChangeInput={setPastedValue}
           value={pastedValue}
           placeholder={`${i18n.t("ssiagent.scanssi.scan.modal.placeholder")}`}
-          onChangeFocus={(value) => !value && setTouched(true)}
+          error={!!getErrorMessage() && touched}
+          className="ssi-input"
+          onChangeFocus={handleChangeFocus}
         />
         <InputError
           showError={!!getErrorMessage() && touched}

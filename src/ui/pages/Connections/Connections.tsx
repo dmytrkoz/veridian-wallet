@@ -1,5 +1,5 @@
 import { IonButton, IonIcon, useIonViewWillEnter } from "@ionic/react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Agent } from "../../../core/agent/agent";
 import {
   ConnectionStatus,
@@ -26,7 +26,7 @@ import { TabLayout } from "../../components/layout/TabLayout";
 import { RemovePendingAlert } from "../../components/RemovePendingAlert";
 import { ShareProfile } from "../../components/ShareProfile";
 import { ToastMsgType } from "../../globals/types";
-import { useOnlineStatusEffect } from "../../hooks";
+import { useGetOobi } from "../../hooks/useGetOobi";
 import { showError } from "../../utils/error";
 import { combineClassNames } from "../../utils/style";
 import { ConnectionDetails } from "../ConnectionDetails";
@@ -51,15 +51,15 @@ const Connections = () => {
   const [deletePendingItem, setDeletePendingItem] =
     useState<RegularConnectionDetails | null>(null);
   const [openDeletePendingAlert, setOpenDeletePendingAlert] = useState(false);
-  const [oobi, setOobi] = useState("");
   const [hideHeader, setHideHeader] = useState(false);
   const [search, setSearch] = useState("");
   const currentProfile = useAppSelector(getCurrentProfile);
-  const profileConnections =
-    currentProfile?.connections as RegularConnectionDetails[];
-
-  const showPlaceholder =
-    !!profileConnections && profileConnections?.length === 0;
+  const profileConnections: RegularConnectionDetails[] = useMemo(
+    () => currentProfile?.connections || [],
+    [currentProfile]
+  );
+  const showPlaceholder = profileConnections.length === 0;
+  const oobi = useGetOobi(currentProfile?.identity);
 
   useIonViewWillEnter(() => {
     dispatch(setCurrentRoute({ path: TabsRoutePath.CONNECTIONS }));
@@ -109,6 +109,8 @@ const Connections = () => {
         value,
       }));
       setMappedConnections(mapToArray);
+    } else {
+      setMappedConnections([]);
     }
   }, [profileConnections]);
 
@@ -123,28 +125,6 @@ const Connections = () => {
       );
     setConnectionShortDetails(shortDetails);
   };
-
-  const fetchOobi = useCallback(async () => {
-    try {
-      if (!currentProfile?.identity.id) return;
-
-      const oobiValue = await Agent.agent.connections.getOobi(
-        `${currentProfile.identity.id}`,
-        { alias: currentProfile?.identity.displayName || "" }
-      );
-      if (oobiValue) {
-        setOobi(oobiValue);
-      }
-    } catch (e) {
-      showError("Unable to fetch connection oobi", e, dispatch);
-    }
-  }, [
-    currentProfile?.identity.id,
-    currentProfile?.identity.displayName,
-    dispatch,
-  ]);
-
-  useOnlineStatusEffect(fetchOobi);
 
   const handleShowConnectionDetails = (item: RegularConnectionDetails) => {
     if (
@@ -167,14 +147,14 @@ const Connections = () => {
   };
 
   const deleteConnection = async () => {
-    if (!deletePendingItem) return;
+    if (!deletePendingItem || !deletePendingItem.identifier) return;
 
     try {
       setDeletePendingItem(null);
 
       await Agent.agent.connections.deleteStaleLocalConnectionById(
         deletePendingItem.id,
-        deletePendingItem.identifier!
+        deletePendingItem.identifier
       );
       dispatch(setToastMsg(ToastMsgType.CONNECTION_DELETED));
       dispatch(removeConnectionCache(deletePendingItem.id));
@@ -226,6 +206,15 @@ const Connections = () => {
   const handleCloseConnectionModal = () => {
     setConnectionShortDetails(undefined);
   };
+
+  // Note: Hide tab bar when connection details are open.
+  // This is a temporary solution until we will refactor the connection details to a separate page.
+  // Remember to remove scss changes as well in Connections.scss
+  useEffect(() => {
+    connectionShortDetails
+      ? document?.querySelector("body")?.classList.add("hide-ion-tab-bar")
+      : document?.querySelector("body")?.classList.remove("hide-ion-tab-bar");
+  }, [connectionShortDetails]);
 
   return connectionShortDetails ? (
     <ConnectionDetails

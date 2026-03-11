@@ -9,9 +9,14 @@
     --background: var(--ion-color-neutral-300);
   }
 
+  .switch-button.ios {
+    --padding-top: 0.5rem;
+    --padding-bottom: 0.5rem;
+    height: auto;
+  }
+
   .user-tips {
-    margin-top: 1.75rem;
-    margin-bottom: 1.5rem;
+    margin: 1.75rem 0 1.5rem;
     flex-direction: row;
     padding: 1rem 1.25rem;
     background: var(--ion-color-neutral-300);
@@ -41,10 +46,15 @@
       }
     }
   }
+
+  .switch-button.secondary-button {
+    --border-radius: 0.5rem;
+  }
 }
 
-.recovery-seed-phrase-page-footer {
-  margin: 1rem 0;
+.recovery-seed-phrase-page-footer.ios {
+  margin-bottom: var(--ion-safe-area-bottom);
+  padding: 0 !important;
 }
 
 .confirm-view-seedpharse {

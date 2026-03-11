@@ -18,8 +18,10 @@ enum EventTypes {
   OperationComplete = "OperationComplete",
   OperationFailed = "OperationFailed",
   OperationAdded = "OperationAdded",
+  OperationRemoved = "OperationRemoved",
   ConnectionStateChanged = "ConnectionStateChanged",
   ConnectionRemoved = "ConnectionRemoved",
+  ConnectionInvalid = "ConnectionInvalid",
   AcdcStateChanged = "AcdcStateChanged",
   KeriaStatusChanged = "KeriaStatusChanged",
   NotificationRemoved = "NotificationRemoved",
@@ -59,6 +61,13 @@ interface OperationAddedEvent extends BaseEventEmitter {
   };
 }
 
+interface OperationRemovedEvent extends BaseEventEmitter {
+  type: typeof EventTypes.OperationRemoved;
+  payload: {
+    operationId: string;
+  };
+}
+
 interface ConnectionStateChangedEvent extends BaseEventEmitter {
   type: typeof EventTypes.ConnectionStateChanged;
   payload: {
@@ -73,6 +82,14 @@ interface ConnectionStateChangedEvent extends BaseEventEmitter {
 
 interface ConnectionRemovedEvent extends BaseEventEmitter {
   type: typeof EventTypes.ConnectionRemoved;
+  payload: {
+    contactId: string;
+    identifier: string;
+  };
+}
+
+interface ConnectionInvalidEvent extends BaseEventEmitter {
+  type: typeof EventTypes.ConnectionInvalid;
   payload: {
     contactId: string;
     identifier: string;
@@ -135,9 +152,11 @@ export type {
   OperationFailedEvent,
   BaseEventEmitter,
   ConnectionStateChangedEvent,
+  ConnectionInvalidEvent,
   AcdcStateChangedEvent,
   KeriaStatusChangedEvent,
   OperationAddedEvent,
+  OperationRemovedEvent,
   NotificationRemovedEvent,
   ConnectionRemovedEvent,
   IdentifierRemovedEvent,

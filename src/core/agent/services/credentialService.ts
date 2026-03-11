@@ -140,9 +140,7 @@ class CredentialService extends AgentService {
       .delete(id)
       .catch(async (error) => {
         const status = error.message.split(" - ")[1];
-        if (/404/gi.test(status)) {
-          return await this.credentialStorage.deleteCredentialMetadata(id);
-        } else {
+        if (!/404/gi.test(status)) {
           throw error;
         }
       });
@@ -212,14 +210,26 @@ class CredentialService extends AgentService {
   }
 
   async syncKeriaCredentials(): Promise<void> {
+    const identifiers = await this.identifierStorage.getIdentifierRecords();
+
+    if (identifiers.length === 0) {
+      return;
+    }
+
+    const localIdentifierIds = new Set(identifiers.map((id) => id.id));
+
     const cloudCredentials: KeriaCredential[] = [];
     let returned = -1;
     let iteration = 0;
 
     while (returned !== 0) {
+      // Pagination must be sorted to ensure if KERIA parses new credentials the re-indexing is much less likely to interfere
       const result = await this.props.signifyClient.credentials().list({
         skip: iteration * 24,
-        limit: 24 + iteration * 24,
+        limit: 24,
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore - @TODO - foconnor: object[] type is incorrect in signify-ts, to correct to string[].
+        sort: ["-a-dt"],
       });
       cloudCredentials.push(...result);
 
@@ -227,10 +237,17 @@ class CredentialService extends AgentService {
       iteration += 1;
     }
 
+    // Filter credentials where we are the issuee (holder)
+    // @TODO Implement $or filter in KERIA to filter at source instead of in TypeScript
+    const localCredentialsFiltered = cloudCredentials.filter(
+      (credential: KeriaCredential) =>
+        localIdentifierIds.has(credential.sad.a.i)
+    );
+
     const localCredentials =
       await this.credentialStorage.getAllCredentialMetadata();
 
-    const unSyncedData = cloudCredentials.filter(
+    const unSyncedData = localCredentialsFiltered.filter(
       (credential: KeriaCredential) =>
         !localCredentials.find((item) => credential.sad.d === item.id)
     );

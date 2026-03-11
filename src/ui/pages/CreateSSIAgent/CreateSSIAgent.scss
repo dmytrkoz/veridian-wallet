@@ -49,7 +49,7 @@
 .ssi-agent-scan {
   padding: 0 1.25rem;
 
-  .close-button-label > h4 {
+  .close-button-label > p {
     color: var(--ion-color-neutral-200) !important;
   }
 
@@ -78,19 +78,21 @@
 }
 
 .ssi-agent-scan-input-modal.responsive-modal {
-  &.loading {
-    z-index: -1 !important;
-  }
-
   .buttons-last-slot {
     min-width: auto !important;
 
     .action-button-label > p {
-      color: var(--ion-color-primary-700) !important;
+      color: var(--ion-color-primary-700);
     }
   }
 
+  .ssi-input {
+    margin-top: 0.625rem;
+  }
+
   & .responsive-modal-content {
+    padding-bottom: var(--ion-safe-area-bottom);
+
     & > * {
       margin-bottom: 0;
     }
@@ -132,6 +134,11 @@
 
     & > * {
       margin: 0;
+
+      &.error-message,
+      &.ssi-error-placeholder {
+        margin-top: 0.25rem;
+      }
     }
 
     & > ion-item {
@@ -184,7 +191,7 @@
       }
 
       padding: 0 1.25rem;
-      .close-button-label > h4 {
+      .close-button-label > p {
         color: var(--ion-color-neutral-200) !important;
       }
     }

@@ -5,6 +5,7 @@ import {
   keyOutline,
   pencilOutline,
   personCircleOutline,
+  refreshOutline,
   shareOutline,
 } from "ionicons/icons";
 import { useCallback, useState } from "react";
@@ -17,6 +18,7 @@ import {
   getPeerConnections,
   getProfiles,
 } from "../../../../store/reducers/profileCache";
+import { useGetOobi } from "../../../hooks/useGetOobi";
 import {
   formatShortDate,
   formatTimeToSec,
@@ -32,7 +34,7 @@ import { ListItem } from "../../ListCard/ListItem";
 import { ListHeader } from "../../ListHeader";
 import { MemberList } from "../../MemberList";
 import { Member, MemberAcceptStatus } from "../../MemberList/MemberList.type";
-import { ShareConnection } from "../../ShareConnection";
+import { ShareProfile } from "../../ShareProfile";
 import { IdentifierAttributeDetailModal } from "./IdentifierAttributeDetailModal/IdentifierAttributeDetailModal";
 import { DetailView } from "./IdentifierAttributeDetailModal/IdentifierAttributeDetailModal.types";
 import {
@@ -53,8 +55,9 @@ const ProfileInformation = ({ value, text }: ProfileInformationProps) => {
 
 const ProfileContent = ({
   cardData,
-  oobi,
   setCardData,
+  onRotateKey,
+  onAfterScan,
 }: ProfileContentProps) => {
   const profiles = useAppSelector(getProfiles);
   const multisignConnectionsCache = useAppSelector(getMultisigConnectionsCache);
@@ -70,6 +73,7 @@ const ProfileContent = ({
   const [shareIsOpen, setShareIsOpen] = useState(false);
   const [editorOptionsIsOpen, setEditorIsOpen] = useState(false);
   const [editUserName, setEditUserName] = useState(false);
+  const oobi = useGetOobi(cardData);
 
   const openShareModal = () => {
     if (!cardData) return;
@@ -121,6 +125,16 @@ const ProfileContent = ({
     setEditorIsOpen(value);
     setEditUserName(value);
   };
+
+  const signingKey = (() => {
+    if (isMultiSig && cardData.groupMemberPre && cardData.members) {
+      const myIndex = cardData.members.indexOf(cardData.groupMemberPre);
+      if (myIndex !== -1 && cardData.k[myIndex]) {
+        return cardData.k[myIndex];
+      }
+    }
+    return cardData.k[0];
+  })();
 
   return (
     <>
@@ -233,7 +247,9 @@ const ProfileContent = ({
             >
               <CardDetailsContent
                 mainContent={`${i18n.t(
-                  "profiledetails.group.signingkeysthreshold.member",
+                  Number(cardData.kt) === 1
+                    ? "profiledetails.group.signingkeysthreshold.member"
+                    : "profiledetails.group.signingkeysthreshold.members",
                   { member: cardData.kt }
                 )}`}
                 subContent={`${i18n.t(
@@ -247,12 +263,14 @@ const ProfileContent = ({
           {cardData.nt && (
             <CardBlock
               title={i18n.t("profiledetails.group.rotationthreshold.title")}
-              onClick={() => openPropDetailModal(DetailView.RotationThreshold)}
+              onClick={() => openPropDetailModal(DetailView.SigningThreshold)}
               testId="rotate-threshold-block"
             >
               <CardDetailsContent
                 mainContent={`${i18n.t(
-                  "profiledetails.group.rotationthreshold.member",
+                  Number(cardData.nt) === 1
+                    ? "profiledetails.group.rotationthreshold.member"
+                    : "profiledetails.group.rotationthreshold.members",
                   { member: cardData.nt }
                 )}`}
                 subContent={`${i18n.t(
@@ -297,26 +315,39 @@ const ProfileContent = ({
           />
         </CardBlock>
       </div>
-      {cardData.k.length && (
+      {signingKey && (
         <>
           <CardBlock
-            copyContent={cardData.k[0]}
+            copyContent={signingKey}
             title={i18n.t("profiledetails.identifierdetail.signingkey.title")}
             testId="signingkey-block"
+            flatBorder={isMultiSig ? undefined : FlatBorderType.BOT}
           >
-            {cardData.k.map((item, index) => {
-              return (
-                <CardDetailsItem
-                  key={item}
-                  info={`${item.substring(0, 5)}...${item.slice(-5)}`}
-                  testId={`signing-key-${index}`}
-                  icon={keyOutline}
-                  mask={false}
-                  fullText={false}
-                />
-              );
-            })}
+            <CardDetailsItem
+              info={`${signingKey.substring(0, 5)}...${signingKey.slice(-5)}`}
+              testId="signing-key-0"
+              icon={keyOutline}
+              mask={false}
+              fullText={false}
+            />
           </CardBlock>
+          {!isMultiSig && (
+            <CardBlock
+              className="rotate-button-container"
+              flatBorder={FlatBorderType.TOP}
+              testId="rotate-button-block"
+            >
+              <IonButton
+                shape="round"
+                className="rotate-keys-button"
+                data-testid="rotate-keys-button"
+                onClick={onRotateKey}
+              >
+                <p>{i18n.t("tabs.home.tab.tiles.rotate.title")}</p>
+                <IonIcon icon={refreshOutline} />
+              </IonButton>
+            </CardBlock>
+          )}
         </>
       )}
       <ListCard
@@ -325,10 +356,7 @@ const ProfileContent = ({
           {
             label: i18n.t("profiledetails.identifierdetail.showadvanced"),
             icon: appsOutline,
-            onClick: () =>
-              isMultiSig
-                ? undefined
-                : openPropDetailModal(DetailView.AdvancedDetail),
+            onClick: () => openPropDetailModal(DetailView.AdvancedDetail),
           },
         ]}
         renderItem={(item, index) => (
@@ -350,9 +378,14 @@ const ProfileContent = ({
         data={cardData}
         openEdit={openEditUserName}
       />
-      <ShareConnection
+      <ShareProfile
         isOpen={shareIsOpen}
-        setIsOpen={setShareIsOpen}
+        setIsOpen={(value, closeModals) => {
+          setShareIsOpen(value);
+          if (closeModals) {
+            onAfterScan();
+          }
+        }}
         oobi={oobi}
       />
       <EditProfile

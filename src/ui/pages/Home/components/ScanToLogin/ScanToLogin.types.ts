@@ -3,4 +3,9 @@ interface ScanToLoginProps {
   setIsOpen: (value: boolean) => void;
 }
 
-export type { ScanToLoginProps };
+interface ScanToLoginContent {
+  subtitle: string;
+  text: string;
+}
+
+export type { ScanToLoginProps, ScanToLoginContent };

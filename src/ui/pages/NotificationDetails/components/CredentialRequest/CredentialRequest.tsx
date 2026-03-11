@@ -1,14 +1,12 @@
 import { IonSpinner } from "@ionic/react";
 import { useCallback, useMemo, useState } from "react";
 import { Agent } from "../../../../../core/agent/agent";
-import { CredentialStatus } from "../../../../../core/agent/services/credentialService.types";
 import { IdentifierType } from "../../../../../core/agent/services/identifier.types";
 import { CredentialsMatchingApply } from "../../../../../core/agent/services/ipexCommunicationService.types";
 import { i18n } from "../../../../../i18n";
 import { useAppDispatch, useAppSelector } from "../../../../../store/hooks";
 import {
   deleteNotificationById,
-  getCredsCache,
   getCurrentProfile,
   getMultisigConnectionsCache,
   getProfiles,
@@ -33,13 +31,11 @@ const CredentialRequest = ({
 }: NotificationDetailsProps) => {
   const dispatch = useAppDispatch();
   const profiles = useAppSelector(getProfiles);
-  const credsCache = useAppSelector(getCredsCache);
   const multisignConnectionsCache = useAppSelector(getMultisigConnectionsCache);
   const [requestStage, setRequestStage] = useState(0);
   const [credentialRequest, setCredentialRequest] =
     useState<CredentialsMatchingApply | null>();
   const currentProfile = useAppSelector(getCurrentProfile);
-
   const [linkedGroup, setLinkedGroup] = useState<LinkedGroup | null>(null);
   const [isOpenAlert, setIsOpenAlert] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -47,6 +43,9 @@ const CredentialRequest = ({
     useState<RequestCredential | null>(null);
   const [verifyIsOpen, setVerifyIsOpen] = useState(false);
 
+  const notificationExists = !!currentProfile?.notifications.some(
+    (notification) => notification.id === notificationDetails.id
+  );
   const reachThreshold =
     linkedGroup &&
     linkedGroup.othersJoined.length +
@@ -95,6 +94,8 @@ const CredentialRequest = ({
   ]);
 
   const getCrendetialRequest = useCallback(async () => {
+    if (!notificationExists) return;
+
     try {
       const request = await Agent.agent.ipexCommunications.getIpexApplyDetails(
         notificationDetails
@@ -116,7 +117,14 @@ const CredentialRequest = ({
       handleBack();
       showError("Unable to get credential request detail", e, dispatch);
     }
-  }, [notificationDetails, profiles, getMultisigInfo, dispatch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    notificationDetails,
+    profiles,
+    getMultisigInfo,
+    dispatch,
+    notificationExists,
+  ]);
 
   useOnlineStatusEffect(getCrendetialRequest);
 
@@ -124,24 +132,13 @@ const CredentialRequest = ({
   const suitableCredentials = useMemo(() => {
     if (!credentialRequest) return [];
 
-    const revokedCredsCache = credsCache.filter(
-      (item) => item.status === CredentialStatus.REVOKED
-    );
-
-    const mappedCredentials = credentialRequest.credentials.map(
+    return credentialRequest.credentials.map(
       (cred): RequestCredential => ({
         connectionId: cred.connectionId,
         acdc: cred.acdc,
       })
     );
-
-    // Filter out revoked credentials to get active/suitable ones
-    const activeCredentials = mappedCredentials.filter(
-      (cred) => !revokedCredsCache.some((revoked) => revoked.id === cred.acdc.d)
-    );
-
-    return activeCredentials;
-  }, [credentialRequest, credsCache]);
+  }, [credentialRequest]);
 
   // Function to automatically submit a credential
   const handleSubmitCredential = useCallback(
@@ -167,7 +164,12 @@ const CredentialRequest = ({
         );
         handleBack();
       } catch (e) {
-        dispatch(setToastMsg(ToastMsgType.SHARE_CRED_FAIL));
+        showError(
+          "Failed to show cred",
+          e,
+          dispatch,
+          ToastMsgType.SHARE_CRED_FAIL
+        );
       } finally {
         setLoading(false);
       }
@@ -235,7 +237,6 @@ const CredentialRequest = ({
           activeStatus={activeStatus}
           credentialRequest={credentialRequest}
           notificationDetails={notificationDetails}
-          linkedGroup={linkedGroup}
           onBack={backToStageOne}
           reloadData={getCrendetialRequest}
           onSubmit={handleSubmitCredential}

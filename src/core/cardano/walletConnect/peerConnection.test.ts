@@ -3,7 +3,7 @@ import { Agent } from "../../agent/agent";
 import { PeerConnectionPairRecord } from "../../agent/records";
 import { PeerConnection } from "./peerConnection";
 import { KeyStoreKeys, SecureStorage } from "../../storage";
-import ICON_BASE64 from "../../../assets/icon-only";
+
 require("fake-indexeddb/auto");
 
 jest.mock("../../agent/agent", () => ({
@@ -19,6 +19,7 @@ jest.mock("../../agent/agent", () => ({
         updateIdentifier: jest.fn(),
       },
       getKeriaOnlineStatus: jest.fn(),
+      isSeedPhraseVerified: jest.fn().mockResolvedValue(true),
       peerConnectionPair: {
         getPeerConnection: jest.fn(),
         createPeerConnectionPairRecord: jest.fn(),

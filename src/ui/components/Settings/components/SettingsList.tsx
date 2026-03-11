@@ -1,3 +1,4 @@
+import { Capacitor } from "@capacitor/core";
 import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 import { IonToggle } from "@ionic/react";
 import {
@@ -14,78 +15,248 @@ import {
   layersOutline,
   libraryOutline,
   lockClosedOutline,
+  notificationsOutline,
 } from "ionicons/icons";
 import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
 import { useHistory } from "react-router-dom";
-import { ListItem } from "../../ListCard/ListItem/ListItem";
-import { ListCard } from "../../ListCard/ListCard";
 import pJson from "../../../../../package.json";
-import "./SettingsList.scss";
+import { Agent } from "../../../../core/agent/agent";
+import { MiscRecordId } from "../../../../core/agent/agent.types";
+import { BasicRecord } from "../../../../core/agent/records";
+import { i18n } from "../../../../i18n";
+import { notificationService } from "../../../../native/pushNotifications/notificationService";
+import { RoutePath } from "../../../../routes";
 import { useAppDispatch } from "../../../../store/hooks";
 import {
   getBiometricsCache,
   setEnableBiometricsCache,
 } from "../../../../store/reducers/biometricsCache";
 import {
+  getNotificationsPreferences,
+  setNotificationsConfigured,
+  setNotificationsEnabled,
+} from "../../../../store/reducers/notificationsPreferences/notificationsPreferences";
+import {
+  setToastMsg,
+  showGlobalLoading,
+} from "../../../../store/reducers/stateCache";
+import { GlobalLoadingType } from "../../../../store/reducers/stateCache/stateCache.types";
+import { CLEAR_STORE_ACTIONS } from "../../../../store/utils";
+import { DOCUMENTATION_LINK, SUPPORT_EMAIL } from "../../../globals/constants";
+import { ToastMsgType } from "../../../globals/types";
+import { usePrivacyScreen } from "../../../hooks/privacyScreenHook";
+import {
+  BIOMETRIC_SERVER_KEY,
   BiometricAuthOutcome,
   useBiometricAuth,
-  BIOMETRIC_SERVER_KEY,
 } from "../../../hooks/useBiometricsHook";
-import { usePrivacyScreen } from "../../../hooks/privacyScreenHook";
+import { showError } from "../../../utils/error";
+import { openBrowserLink } from "../../../utils/openBrowserLink";
+import { Alert } from "../../Alert";
+import { NativeAlert } from "../../Alert/NativeAlert";
+import { InfoCard } from "../../InfoCard";
+import { ListCard } from "../../ListCard/ListCard";
+import { ListItem } from "../../ListCard/ListItem/ListItem";
+import { PageFooter } from "../../PageFooter";
+import { Verification } from "../../Verification";
+import { VerifySeedPhraseCard } from "../../VerifySeedPhrase";
 import {
   OptionIndex,
   OptionProps,
-  SettingsListProps,
   SettingScreen,
+  SettingsListProps,
 } from "../Settings.types";
-import { i18n } from "../../../../i18n";
-import { DOCUMENTATION_LINK, SUPPORT_EMAIL } from "../../../globals/constants";
-import { Agent } from "../../../../core/agent/agent";
-import { BasicRecord } from "../../../../core/agent/records";
-import { MiscRecordId } from "../../../../core/agent/agent.types";
-import { showError } from "../../../utils/error";
-import { openBrowserLink } from "../../../utils/openBrowserLink";
-import {
-  setToastMsg,
-  showGenericError,
-  showGlobalLoading,
-} from "../../../../store/reducers/stateCache";
-import { CLEAR_STORE_ACTIONS } from "../../../../store/utils";
-import { ToastMsgType } from "../../../globals/types";
-import { RoutePath } from "../../../../routes";
-import { PageFooter } from "../../PageFooter";
 import { ChangePin } from "./ChangePin";
-import { Alert } from "../../Alert";
-import { Verification } from "../../Verification";
-import { InfoCard } from "../../InfoCard";
+import "./SettingsList.scss";
+import { VerifyPasscode } from "../../VerifyPasscode";
 
 const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
   const dispatch = useAppDispatch();
   const biometricsCache = useSelector(getBiometricsCache);
+  const notificationsPreferences = useSelector(getNotificationsPreferences);
   const [option, setOption] = useState<number | null>(null);
-  const {
-    biometricInfo,
-    setupBiometrics,
-    remainingLockoutSeconds,
-    lockoutEndTime,
-  } = useBiometricAuth();
+  const { setupBiometrics, checkBiometrics, isInBiometricProcess } =
+    useBiometricAuth();
 
+  const [confirmPasscode, setConfirmPasscode] = useState(false);
   const [verifyIsOpen, setVerifyIsOpen] = useState(false);
   const [changePinIsOpen, setChangePinIsOpen] = useState(false);
   const { disablePrivacy, enablePrivacy } = usePrivacyScreen();
-  const [openBiometricAlert, setOpenBiometricAlert] = useState(false);
+  const [
+    openAndroidBiometricSettingAlert,
+    setOpenAndroidBiometricSettingAlert,
+  ] = useState(false);
+  const [openBiometricIOSSettingAlert, setOpenBiometricIOSSettingAlert] =
+    useState(false);
+  const [showGenericAlert, setShowGenericAlert] = useState(false);
+  const [showBiometricsNotAvailable, setShowBiometricsNotAvailable] =
+    useState(false);
+  const [showSetupBiometricsAlert, setShowSetupBiometricsAlert] =
+    useState(false);
+
   const [openDeleteAlert, setOpenDeleteAlert] = useState(false);
-  const [showMaxAttemptsAlert, setShowMaxAttemptsAlert] = useState(false);
-  const [showPermanentLockoutAlert, setShowPermanentLockoutAlert] =
+  const [showNotificationsSettingsAlert, setShowNotificationsSettingsAlert] =
+    useState(false);
+  const [showNotificationsErrorAlert, setShowNotificationsErrorAlert] =
+    useState(false);
+  const [
+    showNotificationsSetupFailedAlert,
+    setShowNotificationsSetupFailedAlert,
+  ] = useState(false);
+  const [isProcessingNotificationsToggle, setIsProcessingNotificationsToggle] =
+    useState(false);
+  const [isAwaitingNotificationSettings, setIsAwaitingNotificationSettings] =
     useState(false);
   const history = useHistory();
 
+  const platform = Capacitor.getPlatform();
+  const isAndroidPlatform = platform === "android";
+
   useEffect(() => {
-    if (!lockoutEndTime && showMaxAttemptsAlert) {
-      setShowMaxAttemptsAlert(false);
+    const checkPermissionsOnResume = async () => {
+      if (!isAwaitingNotificationSettings) return;
+
+      try {
+        const granted = await notificationService.arePermissionsGranted();
+        if (granted) {
+          await persistNotificationsPreferences(true, true);
+        } else {
+          setShowNotificationsSetupFailedAlert(true);
+        }
+      } catch (error) {
+        setShowNotificationsSetupFailedAlert(true);
+      } finally {
+        setIsAwaitingNotificationSettings(false);
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkPermissionsOnResume();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAwaitingNotificationSettings]);
+
+  const openNotificationSettings = async () => {
+    try {
+      setIsAwaitingNotificationSettings(true);
+      await NativeSettings.open({
+        optionAndroid: AndroidSettings.AppNotification,
+        optionIOS: IOSSettings.AppNotification,
+      });
+    } catch (error) {
+      setIsAwaitingNotificationSettings(false);
+      showError("Unable to open notification settings", error, dispatch);
     }
-  }, [lockoutEndTime, showMaxAttemptsAlert]);
+  };
+
+  const persistNotificationsPreferences = async (
+    enabled: boolean,
+    configuredOverride?: boolean
+  ) => {
+    const configured =
+      configuredOverride !== undefined
+        ? configuredOverride
+        : notificationsPreferences.configured;
+
+    dispatch(setNotificationsEnabled(enabled));
+    dispatch(setNotificationsConfigured(configured));
+
+    try {
+      await Agent.agent.basicStorage.createOrUpdateBasicRecord(
+        new BasicRecord({
+          id: MiscRecordId.APP_NOTIFICATIONS,
+          content: { enabled, configured },
+        })
+      );
+    } catch (error) {
+      showError("Failed to update notification settings", error, dispatch);
+    }
+  };
+
+  const attemptEnableNotifications = async () => {
+    if (isProcessingNotificationsToggle) {
+      return;
+    }
+
+    setIsProcessingNotificationsToggle(true);
+
+    try {
+      const permissionsGranted =
+        await notificationService.arePermissionsGranted();
+      if (permissionsGranted) {
+        await persistNotificationsPreferences(true, true);
+        return;
+      }
+
+      const granted = await notificationService.requestPermissions();
+      if (granted) {
+        await persistNotificationsPreferences(true, true);
+        return;
+      }
+
+      if (!notificationsPreferences.configured) {
+        setShowNotificationsSettingsAlert(true);
+      } else {
+        await openNotificationSettings();
+      }
+    } catch (error) {
+      if (isAndroidPlatform) {
+        setShowNotificationsErrorAlert(true);
+        return;
+      }
+
+      showError(
+        i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.enablepermissions"
+        ),
+        error,
+        dispatch
+      );
+    } finally {
+      setIsProcessingNotificationsToggle(false);
+    }
+  };
+
+  const handleNotificationToggle = async () => {
+    if (notificationsPreferences.enabled) {
+      await persistNotificationsPreferences(false);
+      return;
+    }
+
+    await attemptEnableNotifications();
+  };
+
+  const handleBiometricUpdate = async () => {
+    if (biometricsCache.enabled) {
+      handleToggleBiometricAuth();
+      return;
+    }
+
+    const biometricInfo = await checkBiometrics();
+
+    if (!biometricInfo.isAvailable) {
+      if (isAndroidPlatform) {
+        setOpenAndroidBiometricSettingAlert(true);
+      } else {
+        setOpenBiometricIOSSettingAlert(true);
+      }
+      return;
+    }
+
+    if (isAndroidPlatform) {
+      setShowSetupBiometricsAlert(true);
+      return;
+    }
+
+    biometricAuth();
+  };
 
   const securityItems: OptionProps[] = [
     {
@@ -105,7 +276,7 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
     },
   ];
 
-  if (biometricsCache.enabled !== undefined && biometricInfo?.isAvailable) {
+  if (biometricsCache.enabled !== undefined) {
     securityItems.unshift({
       index: OptionIndex.BiometricUpdate,
       icon: fingerPrintOutline,
@@ -115,10 +286,29 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
           aria-label="Biometric Toggle"
           className="toggle-button"
           checked={biometricsCache.enabled}
+          onIonChange={handleBiometricUpdate}
         />
       ),
     });
   }
+
+  const preferencesItems: OptionProps[] = [
+    {
+      index: OptionIndex.Notifications,
+      icon: notificationsOutline,
+      label: i18n.t("settings.sections.preferences.notifications.title"),
+      actionIcon: (
+        <IonToggle
+          aria-label="Notifications Toggle"
+          className="toggle-button"
+          checked={notificationsPreferences.enabled}
+          disabled={isProcessingNotificationsToggle}
+          onIonChange={handleNotificationToggle}
+          onClick={(event) => event.stopPropagation()}
+        />
+      ),
+    },
+  ];
 
   const supportItems: OptionProps[] = [
     {
@@ -167,39 +357,34 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
     }
   };
 
-  const handleBiometricUpdate = async () => {
-    if (biometricsCache.enabled) {
-      handleToggleBiometricAuth();
-      return;
-    }
-    biometricAuth();
-  };
-
   const biometricAuth = async () => {
+    if (isInBiometricProcess) return;
+
     try {
       await disablePrivacy();
-
       const setupResult = await setupBiometrics();
       await enablePrivacy();
 
-      switch (setupResult) {
-        case BiometricAuthOutcome.SUCCESS:
-          handleToggleBiometricAuth();
-          break;
-        case BiometricAuthOutcome.USER_CANCELLED:
-          // Do nothing, user cancelled
-          break;
-        case BiometricAuthOutcome.TEMPORARY_LOCKOUT:
-          setShowMaxAttemptsAlert(true);
-          break;
-        case BiometricAuthOutcome.PERMANENT_LOCKOUT:
-          setShowPermanentLockoutAlert(true);
-          break;
-        case BiometricAuthOutcome.NOT_AVAILABLE:
-        case BiometricAuthOutcome.GENERIC_ERROR:
-        default:
-          dispatch(showGenericError(true));
-          break;
+      if (setupResult === BiometricAuthOutcome.SUCCESS) {
+        handleToggleBiometricAuth();
+        return;
+      }
+
+      if (isAndroidPlatform) {
+        switch (setupResult) {
+          case BiometricAuthOutcome.PERMANENT_LOCKOUT:
+          case BiometricAuthOutcome.TEMPORARY_LOCKOUT:
+            setShowBiometricsNotAvailable(true);
+            break;
+          case BiometricAuthOutcome.NOT_AVAILABLE:
+            setOpenAndroidBiometricSettingAlert(true);
+            break;
+          case BiometricAuthOutcome.USER_CANCELLED:
+          case BiometricAuthOutcome.GENERIC_ERROR:
+          default:
+            setShowGenericAlert(true);
+            break;
+        }
       }
     } catch (e) {
       // This catch block is for unexpected errors during the process.
@@ -225,8 +410,12 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
         handleBiometricUpdate();
         break;
       }
+      case OptionIndex.Notifications: {
+        handleNotificationToggle();
+        break;
+      }
       case OptionIndex.ChangePin: {
-        openVerify();
+        setConfirmPasscode(true);
         break;
       }
       case OptionIndex.ManagePassword: {
@@ -255,7 +444,7 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
 
   const deleteWallet = async () => {
     try {
-      dispatch(showGlobalLoading(true));
+      dispatch(showGlobalLoading(GlobalLoadingType.SHOWBG));
       await Agent.agent.deleteWallet();
       CLEAR_STORE_ACTIONS.forEach((action) => dispatch(action()));
       dispatch(setToastMsg(ToastMsgType.DELETE_ACCOUNT_SUCCESS));
@@ -269,7 +458,7 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
         ToastMsgType.DELETE_ACCOUNT_ERROR
       );
     } finally {
-      dispatch(showGlobalLoading(false));
+      dispatch(showGlobalLoading(GlobalLoadingType.NONE));
     }
   };
 
@@ -277,10 +466,6 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
     switch (option) {
       case 0: {
         biometricAuth();
-        break;
-      }
-      case 1: {
-        setChangePinIsOpen(true);
         break;
       }
       case OptionIndex.DeleteWallet:
@@ -292,8 +477,12 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
     setOption(null);
   };
 
+  const openChangePin = () => {
+    setChangePinIsOpen(true);
+  };
+
   const closeAlert = () => {
-    setOpenBiometricAlert(false);
+    setOpenAndroidBiometricSettingAlert(false);
   };
 
   const openDeleteWalletAlert = () => {
@@ -304,10 +493,20 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
   const closeDeleteAlert = () => {
     setOpenDeleteAlert(false);
   };
+
+  const handleCancelBiometrics = () => {
+    setShowGenericAlert(false);
+  };
+
+  const handleCloseIosAlert = () => {
+    setOpenBiometricIOSSettingAlert(false);
+  };
+
   return (
     <>
+      <VerifySeedPhraseCard />
       <InfoCard
-        content={i18n.t("settings.sections.text")}
+        content={i18n.t("settings.info")}
         icon={informationCircleOutline}
       />
       <div className="settings-section-title">
@@ -322,6 +521,7 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
             icon={item.icon}
             label={item.label}
             actionIcon={item.actionIcon}
+            showStartIcon
             note={item.note}
             href={item.href}
             onClick={() => handleOptionClick(item)}
@@ -332,12 +532,35 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
         testId="settings-security-items"
       />
       <div className="settings-section-title">
+        {i18n.t("settings.sections.preferences.title")}
+      </div>
+      <ListCard
+        items={preferencesItems}
+        renderItem={(item) => (
+          <ListItem
+            showStartIcon
+            key={item.index}
+            index={item.index}
+            icon={item.icon}
+            label={item.label}
+            actionIcon={item.actionIcon}
+            note={item.note}
+            href={item.href}
+            onClick={() => handleOptionClick(item)}
+            testId={`settings-preferences-list-item-${item.index}`}
+            className="list-item"
+          />
+        )}
+        testId="settings-preferences-items"
+      />
+      <div className="settings-section-title">
         {i18n.t("settings.sections.support.title")}
       </div>
       <ListCard
         items={supportItems}
         renderItem={(item) => (
           <ListItem
+            showStartIcon
             key={item.index}
             index={item.index}
             icon={item.icon}
@@ -361,9 +584,19 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
         setIsOpen={setChangePinIsOpen}
       />
       <Alert
-        isOpen={openBiometricAlert}
-        setIsOpen={setOpenBiometricAlert}
-        dataTestId="biometric-enable-alert"
+        isOpen={showSetupBiometricsAlert}
+        setIsOpen={setShowSetupBiometricsAlert}
+        dataTestId="alert-setup-biometry"
+        headerText={`${i18n.t("biometry.setupbiometryheader")}`}
+        confirmButtonText={`${i18n.t("biometry.allow")}`}
+        cancelButtonText={`${i18n.t("biometry.setupbiometrycancel")}`}
+        actionConfirm={biometricAuth}
+        backdropDismiss={false}
+      />
+      <Alert
+        isOpen={openAndroidBiometricSettingAlert}
+        setIsOpen={setOpenAndroidBiometricSettingAlert}
+        dataTestId="android-biometric-enable-alert"
         headerText={i18n.t(
           "settings.sections.security.biometricsalert.message"
         )}
@@ -376,6 +609,26 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
         actionConfirm={openSetting}
         actionCancel={closeAlert}
         actionDismiss={closeAlert}
+      />
+      <Alert
+        isOpen={showBiometricsNotAvailable}
+        setIsOpen={setShowBiometricsNotAvailable}
+        dataTestId="alert-unavailable-error"
+        headerText={`${i18n.t("biometry.biometricunavailable")}`}
+        confirmButtonText={`${i18n.t("biometry.biometricunavailableconfirm")}`}
+        actionConfirm={() => setShowBiometricsNotAvailable(false)}
+        backdropDismiss={false}
+      />
+      <Alert
+        isOpen={showGenericAlert}
+        setIsOpen={setShowGenericAlert}
+        dataTestId="alert-generic-error"
+        headerText={`${i18n.t("biometry.biometricsetupretry")}`}
+        confirmButtonText={`${i18n.t("biometry.tryagain")}`}
+        actionConfirm={biometricAuth}
+        secondaryConfirmButtonText={`${i18n.t("biometry.setuplater")}`}
+        actionSecondaryConfirm={handleCancelBiometrics}
+        backdropDismiss={false}
       />
       <Alert
         isOpen={openDeleteAlert}
@@ -397,25 +650,78 @@ const SettingsList = ({ switchView, handleClose }: SettingsListProps) => {
         setVerifyIsOpen={setVerifyIsOpen}
         onVerify={onVerify}
       />
-      <Alert
-        isOpen={showMaxAttemptsAlert}
-        setIsOpen={setShowMaxAttemptsAlert}
-        dataTestId="alert-max-attempts"
-        headerText={`${i18n.t("biometry.lockoutheader", {
-          seconds: remainingLockoutSeconds,
-        })}`}
-        confirmButtonText={`${i18n.t("biometry.lockoutconfirm")}`}
-        actionConfirm={() => setShowMaxAttemptsAlert(false)}
-        backdropDismiss={false}
+      <VerifyPasscode
+        isOpen={confirmPasscode}
+        setIsOpen={setConfirmPasscode}
+        onVerify={openChangePin}
       />
       <Alert
-        isOpen={showPermanentLockoutAlert}
-        setIsOpen={setShowPermanentLockoutAlert}
-        dataTestId="alert-permanent-lockout"
-        headerText={`${i18n.t("biometry.permanentlockoutheader")}`}
-        confirmButtonText={`${i18n.t("biometry.lockoutconfirm")}`}
-        actionConfirm={() => setShowPermanentLockoutAlert(false)}
+        isOpen={showNotificationsSettingsAlert}
+        setIsOpen={setShowNotificationsSettingsAlert}
+        dataTestId="notifications-settings-alert"
+        headerText={i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.enablepermissions"
+        )}
+        confirmButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.confirm"
+        )}`}
+        cancelButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.cancel"
+        )}`}
+        actionConfirm={openNotificationSettings}
+      />
+      <Alert
+        isOpen={showNotificationsErrorAlert}
+        setIsOpen={setShowNotificationsErrorAlert}
+        dataTestId="notifications-try-again-alert"
+        headerText={i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.enablepermissions"
+        )}
+        confirmButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.tryagain"
+        )}`}
+        cancelButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.cancel"
+        )}`}
+        actionConfirm={attemptEnableNotifications}
+      />
+      <Alert
+        isOpen={showNotificationsSetupFailedAlert}
+        setIsOpen={setShowNotificationsSetupFailedAlert}
+        dataTestId="notifications-setup-failed-alert"
+        headerText={i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.setupfailed"
+        )}
+        confirmButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.tryagain"
+        )}`}
+        cancelButtonText={`${i18n.t(
+          "settings.sections.preferences.notifications.notificationsalert.cancel"
+        )}`}
+        actionConfirm={openNotificationSettings}
+      />
+      <NativeAlert
+        dataTestId="ios-biometric-enable-alert"
+        setIsOpen={setOpenBiometricIOSSettingAlert}
+        isOpen={openBiometricIOSSettingAlert}
         backdropDismiss={false}
+        headerText={`${i18n.t("biometry.enablebiometrytitle")}`}
+        subheaderText={`${i18n.t("biometry.enablebiometrymessage")}`}
+        customButtons={[
+          {
+            text: i18n.t("biometry.notnow"),
+            role: "cancel",
+            handler: handleCloseIosAlert,
+          },
+          {
+            text: i18n.t("biometry.setting"),
+            role: "confirm",
+            handler: () => {
+              handleCloseIosAlert();
+              openSetting();
+            },
+          },
+        ]}
       />
     </>
   );

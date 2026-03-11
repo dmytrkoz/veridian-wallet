@@ -1,6 +1,6 @@
 import { IonModal } from "@ionic/react";
 import { warningOutline } from "ionicons/icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useHistory } from "react-router-dom";
 import { Agent } from "../../../core/agent/agent";
 import { CreationStatus } from "../../../core/agent/agent.types";
@@ -12,8 +12,13 @@ import {
   removeProfile,
   setShowProfileState,
 } from "../../../store/reducers/profileCache";
-import { setToastMsg } from "../../../store/reducers/stateCache";
+import {
+  getIsSyncingData,
+  setSyncingData,
+  setToastMsg,
+} from "../../../store/reducers/stateCache";
 import { ToastMsgType } from "../../globals/types";
+import { useOnlineStatusEffect } from "../../hooks";
 import { useProfile } from "../../hooks/useProfile";
 import { Profiles } from "../../pages/Profiles";
 import { showError } from "../../utils/error";
@@ -44,8 +49,15 @@ const ProfileStateModal = () => {
   const [hiddenContent, setHiddenContent] = useState(true);
   const [isOpenProfiles, setOpenProfiles] = useState(false);
   const isOpen = useAppSelector(getShowProfileState);
+  const isSyncing = useAppSelector(getIsSyncingData);
   const history = useHistory();
-  const checkedProfileId = useRef<string | undefined>();
+  const checkedProfile = useRef<{
+    id: string;
+    status: CreationStatus;
+  }>({
+    id: "",
+    status: CreationStatus.COMPLETE,
+  });
 
   const setIsOpen = useCallback(
     (value: boolean) => {
@@ -87,21 +99,29 @@ const ProfileStateModal = () => {
     setIsOpen,
   ]);
 
-  useEffect(() => {
+  const checkProfileState = useCallback(() => {
+    const isProfileChecked =
+      checkedProfile.current.id === currentProfile?.identity.id &&
+      checkedProfile.current.status === currentProfile?.identity.creationStatus;
+
+    if (isProfileChecked) {
+      return;
+    }
+
     if (
       !currentProfile?.identity.creationStatus ||
       !currentProfile?.identity.createdAtUTC ||
-      history.location.pathname.includes(RoutePath.PROFILE_SETUP) ||
-      checkedProfileId.current === currentProfile?.identity.id
+      history.location.pathname.includes(RoutePath.PROFILE_SETUP)
     ) {
       setIsOpen(false);
       return;
     }
 
-    checkedProfileId.current = currentProfile?.identity.id;
     const creationStatus = currentProfile?.identity.creationStatus;
     const groupMemberPre = currentProfile?.identity.groupMemberPre;
     const createdAtUTC = currentProfile?.identity.createdAtUTC;
+    checkedProfile.current.id = currentProfile.identity.id;
+    checkedProfile.current.status = creationStatus;
 
     if (creationStatus === CreationStatus.FAILED) {
       setIsOpen(true);
@@ -135,23 +155,24 @@ const ProfileStateModal = () => {
       return;
     }
 
-    if (creationStatus === CreationStatus.PENDING && groupMemberPre) {
-      setIsOpen(true);
-      setHiddenContent(false);
-      return;
+    if (!isSyncing) {
+      getDetails();
+    } else {
+      dispatch(setSyncingData(false));
     }
-
-    getDetails();
   }, [
     currentProfile?.identity.id,
     currentProfile?.identity.creationStatus,
     currentProfile?.identity.groupMemberPre,
     currentProfile?.identity.createdAtUTC,
-    dispatch,
     getDetails,
     setIsOpen,
     history.location.pathname,
+    isSyncing,
+    dispatch,
   ]);
+
+  useOnlineStatusEffect(checkProfileState);
 
   const type = useMemo(() => {
     if (currentProfile?.identity.creationStatus === CreationStatus.PENDING)

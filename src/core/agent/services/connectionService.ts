@@ -15,7 +15,6 @@ import {
   AgentServicesProps,
   ConnectionDetails,
   ConnectionNoteDetails,
-  ConnectionNoteProps,
   ConnectionShortDetails,
   ConnectionStatus,
   CreationStatus,
@@ -29,6 +28,7 @@ import {
   RegularConnectionDetailsFull,
   WOOBI_RE,
 } from "../agent.types";
+import type { ConnectionNoteProps } from "../agent.types";
 import {
   BasicStorage,
   ConnectionPairRecord,
@@ -44,13 +44,14 @@ import { AgentService } from "./agentService";
 import { OnlineOnly, randomSalt, waitAndGetDoneOp } from "./utils";
 import { StorageMessage } from "../../storage/storage.types";
 import {
+  ConnectionInvalidEvent,
   ConnectionRemovedEvent,
   ConnectionStateChangedEvent,
   EventTypes,
 } from "../event.types";
 import {
   ConnectionHistoryType,
-  KeriaContactKeyPrefix,
+  KeriaContactKeyElement,
   OobiQueryParams,
   RpyRoute,
 } from "./connectionService.types";
@@ -94,6 +95,8 @@ class ConnectionService extends AgentService {
   static readonly OOBI_INVALID = "OOBI URL is invalid";
   static readonly NORMAL_CONNECTIONS_REQUIRE_SHARED_IDENTIFIER =
     "Cannot set up normal connection without specifying a local identifier to share with the other party";
+  static readonly CONNECTION_PAIR_MISSING_ALIAS =
+    "Connection pair missing alias";
 
   onConnectionStateChanged(
     callback: (event: ConnectionStateChangedEvent) => void
@@ -126,6 +129,10 @@ class ConnectionService extends AgentService {
     );
   }
 
+  onConnectionInvalid(callback: (event: ConnectionInvalidEvent) => void) {
+    this.props.eventEmitter.on(EventTypes.ConnectionInvalid, callback);
+  }
+
   @OnlineOnly
   async connectByOobiUrl(
     url: string,
@@ -137,6 +144,7 @@ class ConnectionService extends AgentService {
 
     if (
       !new URL(url).pathname.match(OOBI_RE) &&
+      !new URL(url).pathname.match(DOOBI_RE) &&
       !new URL(url).pathname.match(WOOBI_RE)
     ) {
       throw new Error(ConnectionService.OOBI_INVALID);
@@ -147,6 +155,7 @@ class ConnectionService extends AgentService {
     if (!oobiPath) {
       throw new Error(ConnectionService.OOBI_INVALID);
     }
+
     const connectionId = oobiPath.split("/")[0];
 
     const alias =
@@ -272,9 +281,13 @@ class ConnectionService extends AgentService {
         );
       }
 
+      const connectionAlias = contact.groupId
+        ? contact.alias
+        : connectionPair.alias;
+
       connections.push({
         id: connectionPair.contactId,
-        alias: contact.alias,
+        alias: connectionAlias,
         createdAt: connectionPair.createdAt,
         oobi: contact.oobi,
         groupId: contact.groupId,
@@ -369,7 +382,6 @@ class ConnectionService extends AgentService {
       });
 
     const baseConnectionDetails = {
-      label: connection.alias,
       id: connection.id,
       contactId: connection.id,
       status: ConnectionStatus.CONFIRMED,
@@ -377,6 +389,11 @@ class ConnectionService extends AgentService {
     };
 
     if (identifier) {
+      const alias =
+        connection[`${identifier}:${KeriaContactKeyElement.CONNECTION_ALIAS}`];
+      if (typeof alias !== "string") {
+        throw new Error(ConnectionService.CONNECTION_PAIR_MISSING_ALIAS);
+      }
       const createdAt = connection[`${identifier}:createdAt`] as string;
 
       const notes: Array<ConnectionNoteDetails> = [];
@@ -386,17 +403,17 @@ class ConnectionService extends AgentService {
       Object.keys(connection).forEach((key) => {
         if (
           key.startsWith(
-            `${identifier}:${KeriaContactKeyPrefix.CONNECTION_NOTE}`
+            `${identifier}:${KeriaContactKeyElement.CONNECTION_NOTE}`
           ) &&
           connection[key]
         ) {
           notes.push(JSON.parse(connection[key] as string));
         } else if (
           key.startsWith(
-            `${identifier}:${KeriaContactKeyPrefix.HISTORY_IPEX}`
+            `${identifier}:${KeriaContactKeyElement.HISTORY_IPEX}`
           ) ||
           key.startsWith(
-            `${identifier}:${KeriaContactKeyPrefix.HISTORY_REVOKE}`
+            `${identifier}:${KeriaContactKeyElement.HISTORY_REVOKE}`
           )
         ) {
           const historyItem: ConnectionHistoryItem = JSON.parse(
@@ -410,6 +427,7 @@ class ConnectionService extends AgentService {
 
       return {
         ...baseConnectionDetails,
+        label: alias,
         createdAtUTC: createdAt,
         identifier,
         notes,
@@ -428,6 +446,7 @@ class ConnectionService extends AgentService {
     } else {
       return {
         ...baseConnectionDetails,
+        label: connection.alias,
         createdAtUTC: connection.createdAt as string,
         groupId: connection.groupCreationId as string,
         notes: [],
@@ -436,7 +455,6 @@ class ConnectionService extends AgentService {
     }
   }
 
-  @OnlineOnly
   async deleteMultisigConnectionById(contactId: string): Promise<void> {
     await this.props.signifyClient
       .contacts()
@@ -451,7 +469,6 @@ class ConnectionService extends AgentService {
     await this.contactStorage.deleteById(contactId);
   }
 
-  @OnlineOnly
   async deleteConnectionByIdAndIdentifier(
     contactId: string,
     identifier: string
@@ -459,15 +476,13 @@ class ConnectionService extends AgentService {
     const connectionPair = await this.connectionPairStorage.findExpectedById(
       `${identifier}:${contactId}`
     );
+    const totalConnectionPairsForWallet =
+      await this.connectionPairStorage.findAllByQuery({
+        contactId,
+      });
 
-    const allConnectionPairs = await this.connectionPairStorage.findAllByQuery({
-      contactId,
-    });
-
-    const isLastConnectionPair = allConnectionPairs.length === 1;
-
-    if (isLastConnectionPair) {
-      // Delete all
+    if (totalConnectionPairsForWallet.length === 1) {
+      // Delete contact by idempotent
       await this.props.signifyClient
         .contacts()
         .delete(contactId)
@@ -476,14 +491,11 @@ class ConnectionService extends AgentService {
           if (!/404/gi.test(status)) {
             throw error;
           }
-          // Idempotent - ignore 404 errors if already deleted
         });
 
-      await this.contactStorage.deleteById(contactId);
-      await this.connectionPairStorage.deleteById(connectionPair.id);
+      await this.contactStorage.deleteByIdIfExists(contactId);
     } else {
-      // If this is not the last (more accounts with this connection):
-      // Update KERIA contact to remove fields
+      // Only remove relevant fields from contact as there are other connection pairs for this contact
       const connection = await this.props.signifyClient
         .contacts()
         .get(contactId)
@@ -505,10 +517,10 @@ class ConnectionService extends AgentService {
         await this.props.signifyClient
           .contacts()
           .update(contactId, contactUpdates);
-
-        await this.connectionPairStorage.deleteById(connectionPair.id);
       }
     }
+
+    await this.connectionPairStorage.deleteById(connectionPair.id);
   }
 
   async markConnectionPendingDelete(
@@ -591,7 +603,7 @@ class ConnectionService extends AgentService {
 
       metadata = {
         id,
-        alias: contact.alias,
+        alias: connectionPair.alias,
         createdAt: connectionPair.createdAt,
         oobi: contact.oobi,
         groupId: contact.groupId,
@@ -606,6 +618,7 @@ class ConnectionService extends AgentService {
     return this.getConnectionShortDetails(metadata);
   }
 
+  @OnlineOnly
   async createConnectionNote(
     connectionId: string,
     note: ConnectionNoteProps,
@@ -613,15 +626,16 @@ class ConnectionService extends AgentService {
   ): Promise<void> {
     const id = randomSalt();
     await this.props.signifyClient.contacts().update(connectionId, {
-      [`${identifier}:${KeriaContactKeyPrefix.CONNECTION_NOTE}${id}`]:
+      [`${identifier}:${KeriaContactKeyElement.CONNECTION_NOTE}${id}`]:
         JSON.stringify({
           ...note,
-          id: `${KeriaContactKeyPrefix.CONNECTION_NOTE}${id}`,
+          id: `${KeriaContactKeyElement.CONNECTION_NOTE}${id}`,
           timestamp: new Date().toISOString(),
         }),
     });
   }
 
+  @OnlineOnly
   async updateConnectionNoteById(
     connectionId: string,
     connectionNoteId: string,
@@ -633,6 +647,7 @@ class ConnectionService extends AgentService {
     });
   }
 
+  @OnlineOnly
   async deleteConnectionNoteById(
     connectionId: string,
     connectionNoteId: string,
@@ -701,6 +716,7 @@ class ConnectionService extends AgentService {
         id: `${metadata.sharedIdentifier}:${connectionId}`,
         contactId: connectionId,
         identifier: metadata.sharedIdentifier as string,
+        alias: metadata.alias as string,
         creationStatus: metadata.creationStatus as CreationStatus,
         pendingDeletion: false,
         createdAt,
@@ -709,8 +725,6 @@ class ConnectionService extends AgentService {
   }
 
   async syncKeriaContacts(): Promise<void> {
-    const localIdentifiers = await this.identifierStorage.getAllIdentifiers();
-    const localAIDs = localIdentifiers.map((id) => id.id);
     const cloudContacts = await this.props.signifyClient.contacts().list();
 
     for (const contact of cloudContacts) {
@@ -732,29 +746,29 @@ class ConnectionService extends AgentService {
         const keyParts = key.split(":");
         if (keyParts.length === 2 && keyParts[1] === "createdAt") {
           const aid = keyParts[0];
-          if (localAIDs.includes(aid)) {
-            const pairId = `${aid}:${contact.id}`;
-            const pairExists = await this.connectionPairStorage.findById(
-              pairId
-            );
+          const pairId = `${aid}:${contact.id}`;
+          const pairExists = await this.connectionPairStorage.findById(pairId);
 
-            if (!pairExists) {
-              await this.connectionPairStorage.save({
-                id: pairId,
-                contactId: contact.id,
-                identifier: aid,
-                creationStatus: CreationStatus.COMPLETE,
-                pendingDeletion: false,
-                createdAt: new Date(contact[key] as string),
-              });
-            }
+          if (!pairExists) {
+            const aliasValue =
+              contact[`${aid}:${KeriaContactKeyElement.CONNECTION_ALIAS}`];
+            const alias =
+              typeof aliasValue === "string" ? aliasValue : contact.alias;
+            await this.connectionPairStorage.save({
+              id: pairId,
+              contactId: contact.id,
+              identifier: aid,
+              alias,
+              creationStatus: CreationStatus.COMPLETE,
+              pendingDeletion: false,
+              createdAt: new Date(contact[key] as string),
+            });
           }
         }
       }
     }
   }
 
-  @OnlineOnly
   async resolveOobi(
     url: string,
     waitForCompletion = true
@@ -887,6 +901,7 @@ class ConnectionService extends AgentService {
     await this.props.signifyClient.replies().submitRpy(connectionId, ims);
   }
 
+  @OnlineOnly
   async getHumanReadableMessage(
     exnSaid: string
   ): Promise<HumanReadableMessage> {

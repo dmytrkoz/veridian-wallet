@@ -1,16 +1,21 @@
+import { Capacitor } from "@capacitor/core";
 import {
+  AuthenticationStrength,
   AvailableResult,
   BiometricAuthError,
   BiometryType,
   NativeBiometric,
   SetCredentialOptions,
 } from "@capgo/capacitor-native-biometric";
-import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
 import { i18n } from "../../i18n";
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
+import {
+  getAuthentication,
+  getIsInBiometricProcess,
+  setIsInBiometricProcess,
+} from "../../store/reducers/stateCache";
 import { useActivityTimer } from "../components/AppWrapper/hooks/useActivityTimer";
-import { getAuthentication } from "../../store/reducers/stateCache";
-import { useAppSelector } from "../../store/hooks";
 
 class BiometryError extends Error {
   public code: BiometricAuthError;
@@ -67,16 +72,27 @@ const isBiometricPluginError = (
 const useBiometricAuth = (isLockPage = false) => {
   const [biometricInfo, setBiometricInfo] = useState<AvailableResult>({
     isAvailable: false,
+    authenticationStrength: AuthenticationStrength.NONE,
     biometryType: BiometryType.NONE,
+    deviceIsSecure: false,
+    strongBiometryIsAvailable: false,
   });
   const [lockoutEndTime, setLockoutEndTime] = useState<number>();
   const [remainingLockoutSeconds, setRemainingLockoutSeconds] = useState(0);
   const { passwordIsSet } = useAppSelector(getAuthentication);
   const { setPauseTimestamp } = useActivityTimer();
+  const isInBiometricProcess = useAppSelector(getIsInBiometricProcess);
+  const dispatch = useAppDispatch();
 
   const checkBiometrics = async () => {
     if (!Capacitor.isNativePlatform()) {
-      const result = { isAvailable: false, biometryType: BiometryType.NONE };
+      const result: AvailableResult = {
+        isAvailable: false,
+        authenticationStrength: AuthenticationStrength.NONE,
+        biometryType: BiometryType.NONE,
+        deviceIsSecure: false,
+        strongBiometryIsAvailable: false,
+      };
       setBiometricInfo(result);
       return result;
     }
@@ -141,7 +157,7 @@ const useBiometricAuth = (isLockPage = false) => {
 
     try {
       const platform = Capacitor.getPlatform();
-
+      dispatch(setIsInBiometricProcess(true));
       if (platform === "android") {
         await NativeBiometric.verifyIdentity({
           reason: i18n.t("biometry.reason") as string,
@@ -219,6 +235,8 @@ const useBiometricAuth = (isLockPage = false) => {
         }
       }
       return outcome;
+    } finally {
+      dispatch(setIsInBiometricProcess(false));
     }
   };
 
@@ -229,6 +247,7 @@ const useBiometricAuth = (isLockPage = false) => {
       return BiometricAuthOutcome.NOT_AVAILABLE;
     }
 
+    dispatch(setIsInBiometricProcess(true));
     try {
       await NativeBiometric.getCredentials({
         server: BIOMETRIC_SERVER_KEY,
@@ -257,17 +276,21 @@ const useBiometricAuth = (isLockPage = false) => {
       } catch (setCredError) {
         return BiometricAuthOutcome.GENERIC_ERROR;
       }
+    } finally {
+      dispatch(setIsInBiometricProcess(false));
     }
   };
 
   // By wrapping these functions in useCallback, we provide stable references to any
   // component that uses this hook. This is crucial to prevent unintended side effects,
   // like re-running useEffects, and avoids unnecessary re-renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const memoizedHandleBiometricAuth = useCallback(handleBiometricAuth, [
     memoizedCheckBiometrics,
     lockoutEndTime,
     setPauseTimestamp,
   ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const memoizedSetupBiometrics = useCallback(setupBiometrics, [
     memoizedCheckBiometrics,
     memoizedHandleBiometricAuth,
@@ -280,12 +303,13 @@ const useBiometricAuth = (isLockPage = false) => {
     checkBiometrics: memoizedCheckBiometrics,
     remainingLockoutSeconds,
     lockoutEndTime,
+    isInBiometricProcess: isInBiometricProcess,
   };
 };
 
 export {
-  useBiometricAuth,
-  BiometryError,
-  BiometricAuthOutcome,
   BIOMETRIC_SERVER_KEY,
+  BiometricAuthOutcome,
+  BiometryError,
+  useBiometricAuth,
 };

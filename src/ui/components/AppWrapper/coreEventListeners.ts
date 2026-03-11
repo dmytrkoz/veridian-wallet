@@ -4,6 +4,7 @@ import {
   isRegularConnectionDetails,
 } from "../../../core/agent/agent.types";
 import {
+  ConnectionInvalidEvent,
   EventTypes,
   GroupCreatedEvent,
   IdentifierAddedEvent,
@@ -18,6 +19,7 @@ import {
   addOrUpdateProfileIdentity,
   deleteNotificationById,
   handleNotificationReceived,
+  removeConnectionCache,
   updateOrAddConnectionCache,
   updateProfileCreationStatus,
 } from "../../../store/reducers/profileCache";
@@ -54,7 +56,13 @@ const operationCompleteHandler = async (
           creationStatus: CreationStatus.COMPLETE,
         })
       );
-      dispatch(setToastMsg(ToastMsgType.IDENTIFIER_UPDATED));
+      dispatch(
+        setToastMsg(
+          opType === OperationPendingRecordType.Group
+            ? ToastMsgType.GROUP_CREATED
+            : ToastMsgType.IDENTIFIER_UPDATED
+        )
+      );
       break;
   }
 };
@@ -71,7 +79,7 @@ const operationFailureHandler = async (
           creationStatus: CreationStatus.FAILED,
         })
       );
-      dispatch(setToastMsg(ToastMsgType.IDENTIFIER_UPDATED));
+      dispatch(setToastMsg(ToastMsgType.CREATE_IDENTIFIER_FAIL));
       break;
     }
     case OperationPendingRecordType.Oobi: {
@@ -102,10 +110,19 @@ const groupCreatedHandler = async (
   await dispatch(addGroupProfileAsync(event.payload.group));
 };
 
+const removeInvalidConnectionCacheHandler = async (
+  event: ConnectionInvalidEvent,
+  dispatch: ReturnType<typeof useAppDispatch>
+) => {
+  dispatch(removeConnectionCache(event.payload.contactId));
+  dispatch(setToastMsg(ToastMsgType.INVALID_REMOVED_CONNECTION_URL));
+};
+
 export {
   groupCreatedHandler,
   identifierAddedHandler,
   notificationStateChanged,
   operationCompleteHandler,
   operationFailureHandler,
+  removeInvalidConnectionCacheHandler,
 };

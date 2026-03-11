@@ -50,6 +50,7 @@ const setBackgroundColorMock = jest.fn();
 jest.mock("../core/agent/agent", () => ({
   Agent: {
     agent: {
+      isVerificationEnforced: jest.fn(),
       devPreload: jest.fn(),
       start: jest.fn(),
       setupLocalDependencies: () => mockInitDatabase(),
@@ -60,6 +61,7 @@ jest.mock("../core/agent/agent", () => ({
           mnemonic: "",
         })
       ),
+      isSeedPhraseVerified: jest.fn(() => true),
       identifiers: {
         getIdentifiers: jest.fn().mockResolvedValue([]),
         syncKeriaIdentifiers: jest.fn(),
@@ -73,6 +75,7 @@ jest.mock("../core/agent/agent", () => ({
         getConnections: jest.fn().mockResolvedValue([]),
         getMultisigConnections: jest.fn().mockResolvedValue([]),
         onConnectionStateChanged: jest.fn(),
+        onConnectionInvalid: jest.fn(),
         getConnectionShortDetails: jest.fn(),
         isConnectionRequestSent: jest.fn(),
         isConnectionResponseReceived: jest.fn(),
@@ -221,21 +224,14 @@ jest.mock("@capacitor/keyboard", () => ({
 
 jest.mock("@capgo/capacitor-native-biometric", () => ({
   NativeBiometric: {
-    deleteCredentials: jest.fn(() => Promise.resolve()),
-  },
-}));
-
-jest.mock("@capacitor-community/privacy-screen", () => ({
-  PrivacyScreen: {
-    enable: jest.fn(),
-    disable: jest.fn(),
-  },
-}));
-
-jest.mock("@capgo/capacitor-native-biometric", () => ({
-  NativeBiometric: {
     isAvailable: jest.fn(() =>
-      Promise.resolve({ isAvailable: true, biometryType: "fingerprint" })
+      Promise.resolve({
+        isAvailable: true,
+        biometryType: "fingerprint",
+        authenticationStrength: 1, // STRONG
+        deviceIsSecure: true,
+        strongBiometryIsAvailable: true,
+      })
     ),
     verifyIdentity: jest.fn(() => Promise.resolve()),
     getCredentials: jest.fn(() => Promise.reject(new Error("No credentials"))),
@@ -250,6 +246,11 @@ jest.mock("@capgo/capacitor-native-biometric", () => ({
     MULTIPLE: "multiple",
     NONE: "none",
   },
+  AuthenticationStrength: {
+    NONE: 0,
+    STRONG: 1,
+    WEAK: 2,
+  },
   BiometricAuthError: {
     USER_CANCEL: 1,
     USER_TEMPORARY_LOCKOUT: 2,
@@ -257,6 +258,13 @@ jest.mock("@capgo/capacitor-native-biometric", () => ({
     BIOMETRICS_UNAVAILABLE: 4,
     UNKNOWN_ERROR: 5,
     BIOMETRICS_NOT_ENROLLED: 6,
+  },
+}));
+
+jest.mock("@capacitor-community/privacy-screen", () => ({
+  PrivacyScreen: {
+    enable: jest.fn(),
+    disable: jest.fn(),
   },
 }));
 
@@ -269,6 +277,10 @@ jest.mock("../ui/hooks/useBiometricsHook", () => {
       biometricInfo: {
         isAvailable: false,
         biometryType: actualCapgoBiometric.BiometryType.NONE,
+        authenticationStrength:
+          actualCapgoBiometric.AuthenticationStrength.NONE,
+        deviceIsSecure: false,
+        strongBiometryIsAvailable: false,
       },
       setupBiometrics: jest.fn(),
       handleBiometricAuth: jest.fn(),
@@ -362,7 +374,10 @@ describe("App", () => {
     (useBiometricAuth as jest.Mock).mockReturnValue({
       biometricInfo: {
         isAvailable: true,
-        biometryType: BiometryType.FINGERPRINT,
+        biometryType: "fingerprint",
+        authenticationStrength: 1, // STRONG
+        deviceIsSecure: true,
+        strongBiometryIsAvailable: true,
       },
       setupBiometrics: jest.fn(),
       handleBiometricAuth: jest.fn(),
@@ -508,14 +523,14 @@ describe("App", () => {
       dispatch: dispatchMock,
     };
 
-    const { getByTestId } = render(
+    const { getAllByTestId } = render(
       <Provider store={storeMocked}>
         <App />
       </Provider>
     );
 
     await waitFor(() => {
-      expect(getByTestId("loading-page")).toBeVisible();
+      expect(getAllByTestId("loading-page")[0]).toBeVisible();
     });
   });
 
@@ -869,7 +884,7 @@ describe("System threat alert", () => {
 
     await waitFor(() => {
       expect(startFreeRASPMock).toHaveBeenCalled();
-      expect(getByText("Threats Detected")).toBeVisible();
+      expect(getByText(Eng_Trans.systemthreats.title)).toBeVisible();
     });
   });
 
@@ -895,7 +910,7 @@ describe("System threat alert", () => {
     });
 
     await waitFor(() => {
-      expect(getByText("Threats Detected")).toBeVisible();
+      expect(getByText(Eng_Trans.systemthreats.title)).toBeVisible();
       expect(getByText(Eng_Trans.systemthreats.rules.simulator)).toBeVisible();
     });
   });
@@ -976,7 +991,7 @@ describe("System threat alert", () => {
     });
 
     await waitFor(() => {
-      expect(getByText("Threats Detected")).toBeVisible();
+      expect(getByText(Eng_Trans.systemthreats.title)).toBeVisible();
       expect(
         getByText(Eng_Trans.systemthreats.rules.privilegedaccess)
       ).toBeVisible();

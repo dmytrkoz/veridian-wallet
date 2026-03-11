@@ -1,6 +1,5 @@
 import { AnyAction, ThunkAction } from "@reduxjs/toolkit";
 import { RootState } from "../../store";
-import { clearSeedPhraseCache } from "../../store/reducers/seedPhraseCache";
 import {
   removeCurrentRoute,
   setCurrentRoute,
@@ -13,7 +12,9 @@ const getBackRoute = (
   data: DataProps
 ): {
   backPath: { pathname: string };
-  updateRedux: (() => ThunkAction<void, RootState, undefined, AnyAction>)[];
+  updateRedux: ((
+    data: DataProps
+  ) => AnyAction | ThunkAction<void, RootState, undefined, AnyAction>)[];
 } => {
   const { updateRedux } = backRoute[currentPath];
   const backPathUrl = backPath(data);
@@ -46,7 +47,7 @@ const getDefaultPath = (data: DataProps) => {
     data.store.stateCache.authentication.passwordIsSet ||
     data.store.stateCache.authentication.passwordIsSkipped
   ) {
-    return RoutePath.GENERATE_SEED_PHRASE;
+    return RoutePath.SSI_AGENT;
   }
 
   return RoutePath.ONBOARDING;
@@ -66,10 +67,6 @@ const getPreviousRoute = (data: DataProps): { pathname: string } => {
     path = getDefaultPath(data);
   }
 
-  if (path === RoutePath.VERIFY_SEED_PHRASE) {
-    path = RoutePath.GENERATE_SEED_PHRASE;
-  }
-
   return { pathname: path };
 };
 
@@ -82,40 +79,37 @@ const calcPreviousRoute = (
 
 const backPath = (data: DataProps) => getPreviousRoute(data);
 
-const backRoute: Record<string, any> = {
+const backRoute: Record<
+  string,
+  {
+    updateRedux: ((
+      data: DataProps
+    ) => AnyAction | ThunkAction<void, RootState, undefined, AnyAction>)[];
+  }
+> = {
   [RoutePath.ROOT]: {
     updateRedux: [],
   },
   [RoutePath.ONBOARDING]: {
     updateRedux: [],
   },
-  [RoutePath.GENERATE_SEED_PHRASE]: {
-    updateRedux: [
-      removeCurrentRoute,
-      updateStoreSetCurrentRoute,
-      clearSeedPhraseCache,
-    ],
-  },
-  [RoutePath.VERIFY_SEED_PHRASE]: {
-    updateRedux: [removeCurrentRoute, updateStoreSetCurrentRoute],
-  },
   [RoutePath.VERIFY_RECOVERY_SEED_PHRASE]: {
-    updateRedux: [removeCurrentRoute, updateStoreSetCurrentRoute],
+    updateRedux: [() => removeCurrentRoute(), updateStoreSetCurrentRoute],
   },
   [RoutePath.SSI_AGENT]: {
-    updateRedux: [removeCurrentRoute],
+    updateRedux: [() => removeCurrentRoute()],
   },
   [RoutePath.SET_PASSCODE]: {
-    updateRedux: [removeCurrentRoute, updateStoreSetCurrentRoute],
+    updateRedux: [() => removeCurrentRoute(), updateStoreSetCurrentRoute],
   },
   [RoutePath.CREATE_PASSWORD]: {
-    updateRedux: [removeCurrentRoute],
+    updateRedux: [() => removeCurrentRoute()],
   },
   [TabsRoutePath.NOTIFICATION_DETAILS]: {
-    updateRedux: [removeCurrentRoute],
+    updateRedux: [() => removeCurrentRoute()],
   },
   [TabsRoutePath.CREDENTIAL_DETAILS]: {
-    updateRedux: [removeCurrentRoute],
+    updateRedux: [() => removeCurrentRoute()],
   },
 };
 

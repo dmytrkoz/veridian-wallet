@@ -26,7 +26,11 @@ import {
 } from "../records";
 import type { CredentialMetadataRecordProps } from "../records/credentialMetadataRecord.types";
 import { AgentService } from "./agentService";
-import { getCredentialShortDetails, OnlineOnly } from "./utils";
+import {
+  getCredentialShortDetails,
+  OnlineOnly,
+  SeedPhraseVerified,
+} from "./utils";
 import type { ACDC } from "./credentialService.types";
 import {
   CredentialStatus,
@@ -53,7 +57,7 @@ import { IdentifierType } from "./identifier.types";
 import {
   ConnectionHistoryItem,
   ConnectionHistoryType,
-  KeriaContactKeyPrefix,
+  KeriaContactKeyElement,
 } from "./connectionService.types";
 import { Agent } from "../agent";
 import { StorageMessage } from "../../storage/storage.types";
@@ -104,6 +108,7 @@ class IpexCommunicationService extends AgentService {
     this.connections = connections;
   }
 
+  @SeedPhraseVerified
   @OnlineOnly
   async admitAcdcFromGrant(notificationId: string): Promise<void> {
     const grantNoteRecord = await this.notificationStorage.findById(
@@ -214,6 +219,7 @@ class IpexCommunicationService extends AgentService {
     await this.notificationStorage.update(grantNoteRecord);
   }
 
+  @SeedPhraseVerified
   @OnlineOnly
   async offerAcdcFromApply(notificationId: string, acdc: ACDC): Promise<void> {
     const applyNoteRecord = await this.notificationStorage.findById(
@@ -281,7 +287,6 @@ class IpexCommunicationService extends AgentService {
     await this.notificationStorage.update(applyNoteRecord);
   }
 
-  @OnlineOnly
   async grantAcdcFromAgree(notificationId: string): Promise<void> {
     const agreeNoteRecord = await this.notificationStorage.findById(
       notificationId
@@ -567,7 +572,7 @@ class IpexCommunicationService extends AgentService {
         if (!exnHasAcdc(message.exn.e)) {
           throw new Error("CREDENTIAL_REVOKED message must have e.acdc");
         }
-        prefix = KeriaContactKeyPrefix.HISTORY_REVOKE;
+        prefix = KeriaContactKeyElement.HISTORY_REVOKE;
         // TypeScript now knows message.exn.e.acdc exists
         key = message.exn.e.acdc.d;
         break;
@@ -575,7 +580,7 @@ class IpexCommunicationService extends AgentService {
       case ConnectionHistoryType.CREDENTIAL_REQUEST_PRESENT:
       case ConnectionHistoryType.CREDENTIAL_PRESENTED:
       case ConnectionHistoryType.IPEX_AGREE_COMPLETE:
-        prefix = KeriaContactKeyPrefix.HISTORY_IPEX;
+        prefix = KeriaContactKeyElement.HISTORY_IPEX;
         key = message.exn.d;
         break;
       default:
@@ -594,6 +599,7 @@ class IpexCommunicationService extends AgentService {
     });
   }
 
+  @SeedPhraseVerified
   @OnlineOnly
   async joinMultisigAdmit(grantNotificationId: string): Promise<void> {
     const grantNoteRecord = await this.notificationStorage.findById(
@@ -692,6 +698,8 @@ class IpexCommunicationService extends AgentService {
     await this.notificationStorage.update(grantNoteRecord);
   }
 
+  @SeedPhraseVerified
+  @OnlineOnly
   async joinMultisigOffer(applyNotificationId: string): Promise<void> {
     const applyNoteRecord = await this.notificationStorage.findById(
       applyNotificationId
@@ -1006,6 +1014,7 @@ class IpexCommunicationService extends AgentService {
     return { op, exnSaid: exn.ked.d };
   }
 
+  @OnlineOnly
   async getAcdcFromIpexGrant(
     said: string
   ): Promise<Omit<ACDCDetails, "identifierType">> {
@@ -1061,7 +1070,7 @@ class IpexCommunicationService extends AgentService {
   private async submitMultisigAdmit(
     multisigId: string,
     grantExn: ExnMessage,
-    admitExnToJoin?: any
+    admitExnToJoin?: Record<string, unknown>
   ): Promise<SubmitIPEXResult> {
     if (!this.props.signifyClient.manager) {
       throw new Error(SIGNIFY_CLIENT_MANAGER_NOT_INITIALIZED);
@@ -1155,6 +1164,7 @@ class IpexCommunicationService extends AgentService {
     return { op, exnSaid: exn.ked.d };
   }
 
+  @OnlineOnly
   async getLinkedGroupFromIpexGrant(id: string): Promise<LinkedGroupInfo> {
     const grantNoteRecord = await this.notificationStorage.findById(id);
     if (!grantNoteRecord) {
@@ -1198,6 +1208,7 @@ class IpexCommunicationService extends AgentService {
     };
   }
 
+  @OnlineOnly
   async getLinkedGroupFromIpexApply(id: string): Promise<LinkedGroupInfo> {
     const applyNoteRecord = await this.notificationStorage.findById(id);
     if (!applyNoteRecord) {
@@ -1241,6 +1252,7 @@ class IpexCommunicationService extends AgentService {
     };
   }
 
+  @OnlineOnly
   async getOfferedCredentialSaid(current: string): Promise<string> {
     const multiSigExn = await this.props.signifyClient.exchanges().get(current);
     const offerExn = multiSigExn.exn.e.exn;

@@ -1,3 +1,37 @@
+jest.mock("@capacitor-community/tap-jacking", () => ({
+  TapJacking: {
+    preventOverlays: jest.fn(),
+  },
+}));
+
+jest.mock("@capacitor-mlkit/barcode-scanning", () => ({
+  LensFacing: {
+    FRONT: "FRONT",
+    BACK: "BACK",
+  },
+}));
+
+jest.mock("@capacitor/device", () => ({
+  Device: {
+    getInfo: jest.fn(() => Promise.resolve({ platform: "ios" })),
+  },
+}));
+
+jest.mock("@capacitor/app", () => ({
+  App: {
+    addListener: jest.fn(() => Promise.resolve({ remove: jest.fn() })),
+    removeAllListeners: jest.fn(),
+  },
+}));
+
+jest.mock("@evva/capacitor-secure-storage-plugin", () => ({
+  SecureStoragePlugin: {
+    get: jest.fn(() => Promise.resolve({ value: null })),
+    set: jest.fn(() => Promise.resolve()),
+    remove: jest.fn(() => Promise.resolve()),
+    keys: jest.fn(() => Promise.resolve({ value: [] })),
+  },
+}));
 const getConnectionShortDetailByIdMock = jest.fn();
 
 jest.mock("@capacitor/local-notifications", () => ({
@@ -13,6 +47,12 @@ jest.mock("@capacitor/local-notifications", () => ({
     ),
     checkPermissions: jest.fn(() => Promise.resolve({ display: "granted" })),
     createChannel: jest.fn(() => Promise.resolve()),
+  },
+}));
+
+jest.mock("@capacitor/core", () => ({
+  Capacitor: {
+    getPlatform: jest.fn(() => "ios"),
   },
 }));
 
@@ -84,6 +124,17 @@ import {
   operationCompleteHandler,
   operationFailureHandler,
 } from "./coreEventListeners";
+import { notificationService } from "../../../native/pushNotifications/notificationService";
+import { clearNotificationsPreferences } from "../../../store/reducers/notificationsPreferences/notificationsPreferences";
+
+jest.mock("../../../native/pushNotifications/notificationService", () => ({
+  notificationService: {
+    initialize: jest.fn(() => Promise.resolve(false)),
+    setProfileSwitcher: jest.fn(),
+    arePermissionsGranted: jest.fn(() => Promise.resolve(false)),
+    requestPermissions: jest.fn(() => Promise.resolve(false)),
+  },
+}));
 
 jest.mock("../../../core/agent/agent", () => {
   const mockPeerConnectionPairRecordPlainObject = {
@@ -101,6 +152,7 @@ jest.mock("../../../core/agent/agent", () => {
   return {
     Agent: {
       agent: {
+        isVerificationEnforced: jest.fn(),
         devPreload: jest.fn(),
         start: jest.fn(),
         setupLocalDependencies: jest.fn(),
@@ -112,6 +164,7 @@ jest.mock("../../../core/agent/agent", () => {
             })
           ),
         },
+        isSeedPhraseVerified: jest.fn(() => true),
         identifiers: {
           getIdentifiers: jest.fn().mockResolvedValue([]),
           getIdentifier: jest.fn().mockResolvedValue(null),
@@ -127,6 +180,7 @@ jest.mock("../../../core/agent/agent", () => {
           getConnections: jest.fn().mockResolvedValue([]),
           getMultisigConnections: jest.fn().mockResolvedValue([]),
           onConnectionStateChanged: jest.fn(),
+          onConnectionInvalid: jest.fn(),
           getConnectionShortDetails: jest.fn(),
           isConnectionRequestSent: jest.fn(),
           isConnectionResponseReceived: jest.fn(),
@@ -172,7 +226,11 @@ jest.mock("../../../core/agent/agent", () => {
           findById: jest.fn(),
           save: jest.fn(),
           createOrUpdateBasicRecord: jest.fn(),
+          deleteById: jest.fn(),
         },
+        dependenciesInitialized: false,
+        eventListenersSetup: false,
+        isPolling: false,
       },
     },
   };
@@ -180,7 +238,21 @@ jest.mock("../../../core/agent/agent", () => {
 
 jest.mock("@capgo/capacitor-native-biometric", () => ({
   NativeBiometric: {
+    isAvailable: jest.fn(() =>
+      Promise.resolve({
+        isAvailable: true,
+        biometryType: "fingerprint",
+        authenticationStrength: 1, // STRONG
+        deviceIsSecure: true,
+        strongBiometryIsAvailable: true,
+      })
+    ),
     deleteCredentials: jest.fn(() => Promise.resolve()),
+  },
+  AuthenticationStrength: {
+    NONE: 0,
+    STRONG: 1,
+    WEAK: 2,
   },
   BiometricAuthError: {
     UNKNOWN_ERROR: 0,
@@ -212,6 +284,138 @@ describe("App Wrapper", () => {
     await waitFor(() => {
       expect(getByText("App Content")).toBeInTheDocument();
     });
+  });
+});
+
+describe("AppWrapper notification preferences", () => {
+  const notificationModule = notificationService as jest.Mocked<
+    typeof notificationService
+  >;
+  const createOrUpdateMock = Agent.agent.basicStorage
+    .createOrUpdateBasicRecord as jest.Mock;
+  const findByIdMock = Agent.agent.basicStorage.findById as jest.Mock;
+
+  beforeEach(() => {
+    store.dispatch(clearNotificationsPreferences());
+    createOrUpdateMock.mockClear();
+    findByIdMock.mockReset();
+    findByIdMock.mockResolvedValue(null);
+    notificationModule.initialize.mockResolvedValue(false);
+    notificationModule.arePermissionsGranted.mockResolvedValue(false);
+    (Agent.agent as any).eventListenersSetup = false;
+    (Agent.agent as any).dependenciesInitialized = false;
+    (Agent.agent as any).isPolling = false;
+  });
+
+  test("persists preference when OS permissions already granted", async () => {
+    notificationModule.arePermissionsGranted.mockResolvedValue(true);
+
+    render(
+      <Provider store={store}>
+        <AppWrapper>
+          <div>App Content</div>
+        </AppWrapper>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(createOrUpdateMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: MiscRecordId.APP_NOTIFICATIONS,
+          content: { enabled: true, configured: true },
+        })
+      );
+    });
+  });
+
+  test("persists preference when notification service init succeeds", async () => {
+    notificationModule.initialize.mockResolvedValue(true);
+
+    render(
+      <Provider store={store}>
+        <AppWrapper>
+          <div>App Content</div>
+        </AppWrapper>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(createOrUpdateMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: MiscRecordId.APP_NOTIFICATIONS,
+          content: { enabled: true, configured: true },
+        })
+      );
+    });
+  });
+
+  test("does not re-enable notifications when disabled but configured", async () => {
+    findByIdMock.mockImplementation((id: MiscRecordId) => {
+      if (id === MiscRecordId.APP_NOTIFICATIONS) {
+        return Promise.resolve({
+          content: { enabled: false, configured: true },
+        });
+      }
+
+      return Promise.resolve(null);
+    });
+
+    render(
+      <Provider store={store}>
+        <AppWrapper>
+          <div>App Content</div>
+        </AppWrapper>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(notificationModule.initialize).toHaveBeenCalled();
+    });
+
+    expect(createOrUpdateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: MiscRecordId.APP_NOTIFICATIONS,
+        content: { enabled: true, configured: true },
+      })
+    );
+  });
+
+  test("does not persist notifications when dependenciesInitialized is false (wallet deletion scenario)", async () => {
+    // This test simulates the race condition during wallet deletion:
+    // 1. AppWrapper mounts and areDependenciesReady becomes true
+    // 2. Wallet is deleted, Agent.instance = undefined
+    // 3. notificationsPreferences.configured is reset to false
+    // 4. syncNotificationsPreferences effect runs but should NOT persist
+    //    because dependenciesInitialized is false in the new Agent instance
+
+    notificationModule.arePermissionsGranted.mockResolvedValue(true);
+
+    const { unmount } = render(
+      <Provider store={store}>
+        <AppWrapper>
+          <div>App Content</div>
+        </AppWrapper>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect((Agent.agent as any).dependenciesInitialized).toBe(true);
+    });
+
+    (Agent.agent as any).dependenciesInitialized = false;
+    createOrUpdateMock.mockClear();
+
+    store.dispatch(clearNotificationsPreferences());
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(createOrUpdateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: MiscRecordId.APP_NOTIFICATIONS,
+      })
+    );
+
+    unmount();
   });
 });
 
@@ -493,7 +697,7 @@ describe("KERIA operation state changed handler", () => {
       })
     );
     expect(dispatch).toBeCalledWith(
-      setToastMsg(ToastMsgType.IDENTIFIER_UPDATED)
+      setToastMsg(ToastMsgType.CREATE_IDENTIFIER_FAIL)
     );
   });
 

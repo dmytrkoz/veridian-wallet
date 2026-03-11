@@ -1,5 +1,7 @@
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { Capacitor } from "@capacitor/core";
 import { notificationService } from "./notificationService";
+import { dismissAllModals } from "../../ui/utils/modal";
 import { TabsRoutePath } from "../../routes/paths";
 
 jest.mock("@capacitor/local-notifications", () => ({
@@ -29,11 +31,56 @@ jest.mock("../../ui/utils/error", () => ({
   showError: jest.fn(),
 }));
 
+jest.mock("../../ui/utils/modal", () => ({
+  dismissAllModals: jest.fn(),
+}));
+
 describe("NotificationService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (notificationService as any).permissionsGranted = true;
     (notificationService as any).profileSwitcher = null;
+    (notificationService as any).initialized = false;
+  });
+
+  describe("initialize", () => {
+    test("returns cached permission state when already initialized", async () => {
+      (notificationService as any).initialized = true;
+      (notificationService as any).permissionsGranted = true;
+
+      const result = await notificationService.initialize();
+
+      expect(LocalNotifications.requestPermissions).not.toHaveBeenCalled();
+      expect(result).toBe(true);
+    });
+
+    test("requests permissions and sets up listeners on native platforms", async () => {
+      (Capacitor.getPlatform as jest.Mock).mockReturnValue("android");
+      (LocalNotifications.requestPermissions as jest.Mock).mockResolvedValue({
+        display: "granted",
+      });
+
+      const result = await notificationService.initialize();
+
+      expect(LocalNotifications.removeAllListeners).toHaveBeenCalled();
+      expect(LocalNotifications.requestPermissions).toHaveBeenCalled();
+      expect(LocalNotifications.createChannel).toHaveBeenCalled();
+      expect(LocalNotifications.addListener).toHaveBeenCalledWith(
+        "localNotificationActionPerformed",
+        expect.any(Function)
+      );
+      expect(result).toBe(true);
+    });
+
+    test("skips setup when running on web", async () => {
+      (Capacitor.getPlatform as jest.Mock).mockReturnValue("web");
+      (notificationService as any).permissionsGranted = false;
+
+      const result = await notificationService.initialize();
+
+      expect(LocalNotifications.requestPermissions).not.toHaveBeenCalled();
+      expect(result).toBe(false);
+    });
   });
 
   describe("requestPermissions", () => {
@@ -171,6 +218,29 @@ describe("NotificationService", () => {
     });
 
     test("should switch profile and navigate on tap", async () => {
+      (dismissAllModals as jest.Mock).mockResolvedValue(true);
+      const notification = {
+        id: 1,
+        extra: {
+          profileId: "profile-abc",
+          notificationId: "notif-123",
+        },
+      };
+      mockProfileSwitcher.mockImplementationOnce(() => Promise.resolve(true));
+      await (notificationService as any).handleNotificationTap(notification);
+
+      expect(dismissAllModals).toHaveBeenCalled();
+      expect(mockProfileSwitcher).toHaveBeenCalledWith("profile-abc");
+      expect(mockPushState).toHaveBeenCalledWith(
+        null,
+        "",
+        TabsRoutePath.NOTIFICATIONS
+      );
+      expect(mockDispatchEvent).toHaveBeenCalled();
+    });
+
+    test("should abort navigation if modal dismissal blocked", async () => {
+      (dismissAllModals as jest.Mock).mockResolvedValue(false);
       const notification = {
         id: 1,
         extra: {
@@ -181,13 +251,8 @@ describe("NotificationService", () => {
 
       await (notificationService as any).handleNotificationTap(notification);
 
-      expect(mockProfileSwitcher).toHaveBeenCalledWith("profile-abc");
-      expect(mockPushState).toHaveBeenCalledWith(
-        null,
-        "",
-        TabsRoutePath.NOTIFICATIONS
-      );
-      expect(mockDispatchEvent).toHaveBeenCalled();
+      expect(dismissAllModals).toHaveBeenCalled();
+      expect(mockProfileSwitcher).toHaveBeenCalled();
     });
 
     test("should queue notification if profileSwitcher not set", async () => {
@@ -208,22 +273,6 @@ describe("NotificationService", () => {
       );
       expect(mockPushState).not.toHaveBeenCalled();
       expect(mockDispatchEvent).not.toHaveBeenCalled();
-    });
-
-    test("should queue notification if profileSwitcher not set", async () => {
-      const notification = {
-        id: 1,
-        extra: {
-          profileId: "profile-abc",
-          notificationId: "notif-123",
-        },
-      };
-
-      await (notificationService as any).handleNotificationTap(notification);
-
-      expect((notificationService as any).pendingNotification).toEqual(
-        notification
-      );
     });
   });
 
@@ -275,11 +324,13 @@ describe("NotificationService", () => {
       );
 
       const mockProfileSwitcher = jest.fn();
+      mockProfileSwitcher.mockImplementationOnce(() => Promise.resolve(true));
       const mockPushState = jest.spyOn(window.history, "pushState");
       const mockDispatchEvent = jest.spyOn(window, "dispatchEvent");
 
       notificationService.setProfileSwitcher(mockProfileSwitcher);
 
+      (dismissAllModals as jest.Mock).mockResolvedValue(true);
       await (notificationService as any).processPendingNotification();
 
       expect((notificationService as any).pendingNotification).toBeNull();
@@ -294,5 +345,36 @@ describe("NotificationService", () => {
       mockPushState.mockRestore();
       mockDispatchEvent.mockRestore();
     });
+  });
+
+  test("should not redirect to notification tab when switch to deleted profile", async () => {
+    const notification = {
+      id: 1,
+      extra: {
+        profileId: "profile-abc",
+        notificationId: "notif-123",
+      },
+    };
+
+    (notificationService as any).profileSwitcher = null;
+    await (notificationService as any).handleNotificationTap(notification);
+
+    expect((notificationService as any).pendingNotification).toEqual(
+      notification
+    );
+
+    const mockProfileSwitcher = jest.fn();
+    mockProfileSwitcher.mockImplementationOnce(() => Promise.resolve(false));
+    const mockPushState = jest.spyOn(window.history, "pushState");
+    const mockDispatchEvent = jest.spyOn(window, "dispatchEvent");
+
+    notificationService.setProfileSwitcher(mockProfileSwitcher);
+
+    (dismissAllModals as jest.Mock).mockResolvedValue(true);
+    await (notificationService as any).processPendingNotification();
+
+    expect((notificationService as any).pendingNotification).toBeNull();
+    expect(mockProfileSwitcher).toHaveBeenCalledWith("profile-abc");
+    expect(mockPushState).not.toBeCalled();
   });
 });

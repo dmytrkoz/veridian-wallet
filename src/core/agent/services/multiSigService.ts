@@ -1,28 +1,32 @@
 import {
   Algos,
+  b,
+  Cigar,
   CreateIdentifierBody,
   d,
   HabState,
   messagize,
-  Serder,
-  Siger,
-  State,
-  b,
   reply,
+  Serder,
   Serials,
+  Siger,
+  Signer,
+  State,
 } from "signify-ts";
-import {
-  AgentServicesProps,
-  MiscRecordId,
-  CreationStatus,
-  SIGNIFY_CLIENT_MANAGER_NOT_INITIALIZED,
-} from "../agent.types";
-import { NotificationRoute } from "./keriaNotificationService.types";
+import { LATEST_IDENTIFIER_VERSION } from "../../storage/sqliteStorage/cloudMigrations";
+import { StorageMessage } from "../../storage/storage.types";
 import type {
+  AuthorizationRequestExn,
   ConnectionShortDetails,
   MultisigConnectionDetails,
-  AuthorizationRequestExn,
 } from "../agent.types";
+import {
+  AgentServicesProps,
+  CreationStatus,
+  MiscRecordId,
+  SIGNIFY_CLIENT_MANAGER_NOT_INITIALIZED,
+} from "../agent.types";
+import { EventTypes, GroupCreatedEvent } from "../event.types";
 import {
   BasicRecord,
   BasicStorage,
@@ -30,28 +34,26 @@ import {
   NotificationStorage,
   OperationPendingStorage,
 } from "../records";
+import { OperationPendingRecordType } from "../records/operationPendingRecord.type";
 import { AgentService } from "./agentService";
+import { ConnectionService } from "./connectionService";
+import { RpyRoute } from "./connectionService.types";
+import type { MultisigThresholds } from "./identifier.types";
 import {
   GroupParticipants,
+  isGroupInceptionData,
   MultiSigIcpRequestDetails,
   QueuedGroupCreation,
   QueuedGroupProps,
-  isGroupInceptionData,
 } from "./identifier.types";
-import type { MultisigThresholds } from "./identifier.types";
+import { IdentifierService } from "./identifierService";
+import { NotificationRoute } from "./keriaNotificationService.types";
 import {
-  MultiSigRoute,
-  InceptMultiSigExnMessage,
   GroupInformation,
+  InceptMultiSigExnMessage,
+  MultiSigRoute,
 } from "./multiSig.types";
 import { deleteNotificationRecordById, OnlineOnly } from "./utils";
-import { OperationPendingRecordType } from "../records/operationPendingRecord.type";
-import { EventTypes, GroupCreatedEvent } from "../event.types";
-import { ConnectionService } from "./connectionService";
-import { IdentifierService } from "./identifierService";
-import { StorageMessage } from "../../storage/storage.types";
-import { RpyRoute } from "./connectionService.types";
-import { LATEST_IDENTIFIER_VERSION } from "../../storage/sqliteStorage/cloudMigrations";
 
 class MultiSigService extends AgentService {
   static readonly INVALID_THRESHOLD = "Invalid threshold";
@@ -78,6 +80,7 @@ class MultiSigService extends AgentService {
     "Cannot retry creating group identifier if retry data is missing from the DB";
   static readonly GROUP_DATA_MISSING_FOR_INITIATOR =
     "Group data missing for initiator";
+  static readonly CANNOT_FIND_EXCHANGES = "Cannot find exchanges";
 
   protected readonly identifierStorage: IdentifierStorage;
   protected readonly operationPendingStorage: OperationPendingStorage;
@@ -425,6 +428,60 @@ class MultiSigService extends AgentService {
     }
   }
 
+  private async shareMemberOobiToGroup(
+    mHab: HabState,
+    recipientIds: string[]
+  ): Promise<void> {
+    const oobi = await this.connections.getOobi(mHab.prefix);
+
+    const signer = new Signer({ transferable: false });
+
+    const rpyData = {
+      cid: signer.verfer.qb64,
+      oobi,
+    };
+
+    const rpy = reply(
+      RpyRoute.INTRODUCE,
+      rpyData,
+      undefined,
+      undefined,
+      Serials.JSON
+    );
+
+    const sig = signer.sign(new Uint8Array(b(rpy.raw)));
+    const ims = d(
+      messagize(rpy, undefined, undefined, undefined, [sig as Cigar])
+    );
+
+    for (const recipientId of recipientIds) {
+      await this.props.signifyClient.replies().submitRpy(recipientId, ims);
+    }
+  }
+
+  @OnlineOnly
+  async getGroupSizeFromIcpExn(notificationSaid: string): Promise<number> {
+    const icpMsg: InceptMultiSigExnMessage[] = await this.props.signifyClient
+      .groups()
+      .getRequest(notificationSaid)
+      .catch((error) => {
+        const status = error.message.split(" - ")[1];
+        if (/404/gi.test(status)) {
+          return [];
+        } else {
+          throw error;
+        }
+      });
+
+    if (!icpMsg.length) {
+      throw new Error(
+        `${MultiSigService.EXN_MESSAGE_NOT_FOUND} ${notificationSaid}`
+      );
+    }
+
+    return icpMsg[0].exn.a.smids.length;
+  }
+
   @OnlineOnly
   async getMultisigIcpDetails(
     notificationSaid: string
@@ -575,6 +632,13 @@ class MultiSigService extends AgentService {
           exn.e.icp.bt,
           exn.e.icp.b
         );
+
+    const otherMembers = exn.a.smids.filter((id: string) => id !== mHab.prefix);
+
+    // Joiners must share their OOBI to other members before inception
+    // This ensures other members can parse the inception message even if OOBIs are scanned late
+    await this.shareMemberOobiToGroup(mHab, otherMembers);
+
     await this.inceptGroup(mHab, states, inceptionData);
 
     const multisigId = inceptionData.icp.i;
@@ -835,6 +899,7 @@ class MultiSigService extends AgentService {
     }
   }
 
+  @OnlineOnly
   async getInceptionStatus(multisigId: string): Promise<GroupInformation> {
     const members = await this.props.signifyClient
       .identifiers()
@@ -843,6 +908,10 @@ class MultiSigService extends AgentService {
     const exchanges = await this.props.signifyClient.exchanges().list({
       filter: { "-r": MultiSigRoute.ICP, "-a-gid": multisigId },
     });
+
+    if (exchanges.length === 0) {
+      throw new Error(MultiSigService.CANNOT_FIND_EXCHANGES);
+    }
 
     const memberInfos = members.signing.map((member: { aid: string }) => {
       const hasAccepted = exchanges.some(

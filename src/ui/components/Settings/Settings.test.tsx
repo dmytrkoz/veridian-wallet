@@ -1,10 +1,9 @@
+import { Browser } from "@capacitor/browser";
 import {
   BiometryType,
-  BiometricAuthError,
   NativeBiometric,
 } from "@capgo/capacitor-native-biometric";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import { Browser } from "@capacitor/browser";
 import { act } from "react";
 import { Provider } from "react-redux";
 import { Agent } from "../../../core/agent/agent";
@@ -12,18 +11,18 @@ import { MiscRecordId } from "../../../core/agent/agent.types";
 import EN_TRANSLATIONS from "../../../locales/en/en.json";
 import { store } from "../../../store";
 import { setToastMsg } from "../../../store/reducers/stateCache";
+import { profileCacheFixData } from "../../__fixtures__/storeDataFix";
 import { DOCUMENTATION_LINK } from "../../globals/constants";
 import { ToastMsgType } from "../../globals/types";
+import {
+  BIOMETRIC_SERVER_KEY,
+  BiometricAuthOutcome,
+  useBiometricAuth,
+} from "../../hooks/useBiometricsHook";
 import { makeTestStore } from "../../utils/makeTestStore";
 import { passcodeFiller } from "../../utils/passcodeFiller";
 import { Settings } from "./Settings";
 import { OptionIndex } from "./Settings.types";
-import { profileCacheFixData } from "../../__fixtures__/storeDataFix";
-import {
-  BiometricAuthOutcome,
-  BIOMETRIC_SERVER_KEY,
-  useBiometricAuth,
-} from "../../hooks/useBiometricsHook";
 
 jest.mock("../../../store/utils", () => ({
   CLEAR_STORE_ACTIONS: [],
@@ -38,14 +37,10 @@ jest.mock("@capacitor-community/privacy-screen", () => ({
 
 jest.mock("@ionic/react", () => ({
   ...jest.requireActual("@ionic/react"),
-  IonModal: (props: any) => (
-    <div
-      data-testid={props["data-testid"]}
-      style={{ display: props.isOpen ? "block" : "none" }}
-    >
-      {props.children}
-    </div>
-  ),
+  IonModal: (props: any) =>
+    props.isOpen ? (
+      <div data-testid={props["data-testid"]}>{props.children}</div>
+    ) : null,
 }));
 
 jest.mock("@capacitor/browser", () => ({
@@ -83,7 +78,13 @@ jest.mock("@capacitor/core", () => {
 jest.mock("@capgo/capacitor-native-biometric", () => ({
   NativeBiometric: {
     isAvailable: jest.fn(() =>
-      Promise.resolve({ isAvailable: true, biometryType: "fingerprint" })
+      Promise.resolve({
+        isAvailable: true,
+        biometryType: "fingerprint",
+        authenticationStrength: 1, // STRONG
+        deviceIsSecure: true,
+        strongBiometryIsAvailable: true,
+      })
     ),
     verifyIdentity: jest.fn(() => Promise.resolve()),
     getCredentials: jest.fn(() => Promise.reject(new Error("No credentials"))),
@@ -97,6 +98,11 @@ jest.mock("@capgo/capacitor-native-biometric", () => ({
     IRIS_AUTHENTICATION: "iris",
     MULTIPLE: "multiple",
     NONE: "none",
+  },
+  AuthenticationStrength: {
+    NONE: 0,
+    STRONG: 1,
+    WEAK: 2,
   },
   BiometricAuthError: {
     USER_CANCEL: 1,
@@ -219,7 +225,10 @@ describe("Settings page", () => {
     (useBiometricAuth as jest.Mock).mockReturnValue({
       biometricInfo: {
         isAvailable: true,
-        biometryType: BiometryType.FINGERPRINT,
+        biometryType: "fingerprint",
+        authenticationStrength: 1, // STRONG
+        deviceIsSecure: true,
+        strongBiometryIsAvailable: true,
       },
       setupBiometrics: jest.fn(),
       handleBiometricAuth: jest.fn(),
@@ -269,76 +278,6 @@ describe("Settings page", () => {
     expect(
       getByText(EN_TRANSLATIONS.settings.sections.support.version)
     ).toBeInTheDocument();
-  });
-
-  test("Enable biometrics toggle", async () => {
-    const dispatchMock = jest.fn();
-    const initialState = {
-      stateCache: {
-        routes: [],
-        authentication: {
-          loggedIn: true,
-          time: Date.now(),
-          passcodeIsSet: true,
-          passwordIsSet: false,
-        },
-      },
-      biometricsCache: {
-        enabled: false,
-      },
-    };
-
-    const storeMocked = makeTestStore(initialState);
-
-    (useBiometricAuth as jest.Mock).mockReturnValueOnce({
-      biometricInfo: {
-        isAvailable: true,
-        hasCredentials: false,
-        biometryType: BiometryType.FINGERPRINT,
-      },
-      handleBiometricAuth: jest.fn(() =>
-        Promise.resolve(BiometricAuthOutcome.SUCCESS)
-      ),
-      setupBiometrics: jest.fn(() =>
-        Promise.resolve(BiometricAuthOutcome.SUCCESS)
-      ),
-      checkBiometrics: jest.fn(),
-      remainingLockoutSeconds: 30,
-      lockoutEndTime: null,
-    });
-
-    const { getByText, getByTestId } = render(
-      <Provider store={storeMocked}>
-        <Settings
-          show
-          setShow={jest.fn()}
-        />
-      </Provider>
-    );
-
-    expect(
-      getByText(EN_TRANSLATIONS.settings.sections.security.biometry)
-    ).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(getByTestId("settings-security-list-item-0"));
-    });
-
-    await waitFor(() => {
-      expect(storeMocked.getState().biometricsCache.enabled).toBe(true);
-    });
-
-    // Optionally, you can still check if the agent's method was called, but the Redux state is more direct.
-    await waitFor(() => {
-      expect(Agent.agent.basicStorage.createOrUpdateBasicRecord).toBeCalledWith(
-        expect.objectContaining({
-          id: MiscRecordId.APP_BIOMETRY,
-          content: {
-            enabled: true,
-          },
-        })
-      );
-    });
   });
 
   test("Disable biometrics toggle", async () => {
@@ -418,57 +357,6 @@ describe("Settings page", () => {
         server: BIOMETRIC_SERVER_KEY,
       });
     });
-  });
-
-  test("Open setting page when biometrics not available", async () => {
-    const dispatchMock = jest.fn();
-    const initialState = {
-      stateCache: {
-        routes: [],
-        authentication: {
-          loggedIn: true,
-          time: Date.now(),
-          passcodeIsSet: true,
-          passwordIsSet: false,
-        },
-      },
-      biometricsCache: {
-        enabled: false,
-      },
-    };
-
-    const storeMocked = makeTestStore(initialState);
-
-    (useBiometricAuth as jest.Mock).mockReturnValueOnce({
-      biometricInfo: {
-        isAvailable: false,
-        hasCredentials: false,
-        biometryType: BiometryType.FINGERPRINT,
-        code: BiometricAuthError.BIOMETRICS_NOT_ENROLLED,
-      },
-      handleBiometricAuth: jest.fn(() =>
-        Promise.resolve(BiometricAuthOutcome.NOT_AVAILABLE)
-      ),
-      setupBiometrics: jest.fn(() =>
-        Promise.resolve(BiometricAuthOutcome.NOT_AVAILABLE)
-      ),
-      checkBiometrics: jest.fn(),
-      remainingLockoutSeconds: 30,
-      lockoutEndTime: null,
-    });
-
-    const { queryByText } = render(
-      <Provider store={storeMocked}>
-        <Settings
-          show
-          setShow={jest.fn()}
-        />
-      </Provider>
-    );
-
-    expect(
-      queryByText(EN_TRANSLATIONS.settings.sections.security.biometry)
-    ).not.toBeInTheDocument();
   });
 
   test("Open documentation link", async () => {
@@ -566,7 +454,7 @@ describe("Settings page", () => {
   });
 
   test("Open seedphrase screen", async () => {
-    const { getByText, getByTestId } = render(
+    const { getByText, getByTestId, getAllByText } = render(
       <Provider store={store}>
         <Settings
           show
@@ -576,8 +464,10 @@ describe("Settings page", () => {
     );
 
     expect(
-      getByText(EN_TRANSLATIONS.settings.sections.security.seedphrase.title)
-    ).toBeInTheDocument();
+      getByTestId(
+        `settings-security-list-item-${OptionIndex.RecoverySeedPhrase}`
+      )
+    ).toBeVisible();
 
     act(() => {
       fireEvent.click(

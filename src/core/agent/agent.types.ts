@@ -62,6 +62,7 @@ enum MiscRecordId {
   CREDS_FAVOURITES = "creds-favourites",
   DEFAULT_PROFILE = "default-profile",
   APP_BIOMETRY = "app-biometry",
+  APP_NOTIFICATIONS = "app-notifications",
   KERIA_NOTIFICATION_MARKER = "keria-notification-marker",
   APP_CRED_VIEW_TYPE = "app-cred-view-type",
   KERIA_CONNECT_URL = "keria-connect-url",
@@ -79,7 +80,14 @@ enum MiscRecordId {
   BIOMETRICS_SETUP = "biometrics-setup",
   PROFILE_HISTORIES = "profile-histories",
   PENDING_JOIN_GROUP_METADATA = "pending-join-group-metadata",
+  SEED_PHRASE_VERIFIED = "seed-phrase-verified",
+  CRITICAL_ACTION_STATE = "critical-action-state",
 }
+
+export type CriticalActionState = {
+  actionCount: number;
+  deadline: string; // ISO date string
+};
 
 type ConnectionNoteDetails = {
   id: string;
@@ -258,7 +266,7 @@ enum CreationStatus {
 }
 
 export const OOBI_RE =
-  /^\/oobi\/(?<cid>[^/]+)\/(?<role>agent|witness|controller|mailbox)(?:\/(?<eid>[^/]+))?$/i;
+  /^\/oobi\/(?<cid>[^/]+)(?:\/(?:(?<role>agent|witness|controller|mailbox)\/)?(?<eid>[^/?]+))?$/i;
 export const DOOBI_RE = /^\/oobi\/(?<said>[^/]+)$/i;
 export const WOOBI_RE = /^\/\.well-known\/keri\/oobi\/(?<cid>[^/]+)$/;
 

@@ -7,6 +7,7 @@ import { IonReactMemoryRouter } from "@ionic/react-router";
 import EN_TRANSLATIONS from "../../../../../locales/en/en.json";
 import { makeTestStore } from "../../../../utils/makeTestStore";
 import { ScanToLogin } from "./ScanToLogin";
+import { ScanToLoginContent } from "./ScanToLogin.types";
 
 afterEach(() => {
   cleanup();
@@ -38,13 +39,12 @@ describe("ScanToLogin component", () => {
       expect(getByTestId("scan-to-login")).toBeVisible();
     });
 
-    expect(
-      getByText(EN_TRANSLATIONS.tabs.home.tab.modals.scan.content.title)
-    ).toBeInTheDocument();
+    const scanTranslations = EN_TRANSLATIONS.tabs.home.tab.modals.scan;
 
-    const description = EN_TRANSLATIONS.tabs.home.tab.modals.scan.content
-      .description as string;
-    const firstParagraph = description.split(/\r?\n\r?\n+/)[0].trim();
+    expect(getByText(scanTranslations.title)).toBeInTheDocument();
+
+    const firstSection = (scanTranslations.content as ScanToLoginContent[])[0];
+    const firstParagraph = firstSection.text.split(/\r?\n\r?\n+/)[0].trim();
 
     await waitFor(() => {
       expect(getByText(firstParagraph)).toBeVisible();

@@ -17,34 +17,66 @@ import {
 } from "@capacitor-mlkit/barcode-scanning";
 import { IonInput } from "@ionic/react";
 import { IonReactMemoryRouter } from "@ionic/react-router";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { createMemoryHistory } from "history";
 import { Provider } from "react-redux";
 import { Route } from "react-router-dom";
-import EN_Translation from "../../../locales/en/en.json";
 import { RoutePath, TabsRoutePath } from "../../../routes/paths";
-import {
-  setMissingAliasConnection,
-  setOpenConnectionId,
-} from "../../../store/reducers/profileCache";
-import {
-  setToastMsg,
-  showGenericError,
-} from "../../../store/reducers/stateCache";
-import { connectionsFix } from "../../__fixtures__/connectionsFix";
 import { multisignIdentifierFix } from "../../__fixtures__/filteredIdentifierFix";
 import { profileCacheFixData } from "../../__fixtures__/storeDataFix";
 import { CustomInputProps } from "../../components/CustomInput/CustomInput.types";
-import { ShareProfile } from "../../components/ShareProfile";
-import { ToastMsgType } from "../../globals/types";
 import { makeTestStore } from "../../utils/makeTestStore";
 import { SetupGroupProfile } from "./SetupGroupProfile";
+import { notificationsFix } from "../../__fixtures__/notificationsFix";
+import {
+  ConnectionStatus,
+  CreationStatus,
+} from "../../../core/agent/agent.types";
+import EN_TRANS from "../../../locales/en/en.json";
 
 jest.mock("../../../core/agent/agent", () => ({
   Agent: {
     agent: {
+      multiSigs: {
+        getMultisigIcpDetails: jest.fn(() =>
+          Promise.resolve({
+            sender: {
+              contactId: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+              label: "Leader",
+              id: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+            },
+            otherConnections: [],
+            rotationThreshold: 2,
+            signingThreshold: 2,
+          })
+        ),
+        getInceptionStatus: jest.fn(() =>
+          Promise.resolve({
+            threshold: {
+              signingThreshold: 2,
+              rotationThreshold: 2,
+            },
+            members: [
+              {
+                aid: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+                name: "Member1",
+                hasAccepted: false,
+              },
+            ],
+          })
+        ),
+      },
       connections: {
         connectByOobiUrl: (...arg: unknown[]) => connectByOobiUrlMock(...arg),
+      },
+      basicStorage: {
+        findById: jest.fn(() =>
+          Promise.resolve({
+            content: {
+              syncing: false,
+            },
+          })
+        ),
       },
     },
   },
@@ -77,7 +109,15 @@ jest.mock("@capacitor/core", () => {
 jest.mock("@capgo/capacitor-native-biometric", () => ({
   ...jest.requireActual("@capgo/capacitor-native-biometric"),
   NativeBiometric: {
-    isAvailable: jest.fn(),
+    isAvailable: jest.fn(() =>
+      Promise.resolve({
+        isAvailable: true,
+        biometryType: "fingerprint",
+        authenticationStrength: 1, // STRONG
+        deviceIsSecure: true,
+        strongBiometryIsAvailable: true,
+      })
+    ),
     verifyIdentity: jest.fn(),
     getCredentials: jest.fn(),
     setCredentials: jest.fn(),
@@ -184,362 +224,6 @@ describe("Setup Connections", () => {
     );
   });
 
-  test("Renders QR", async () => {
-    const storeMocked = makeTestStore(initialState);
-    const closeModal = jest.fn();
-
-    const { getByText, getByTestId } = render(
-      <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={closeModal}
-        />
-      </Provider>
-    );
-
-    expect(getByText(EN_Translation.shareprofile.buttons.close)).toBeVisible();
-    expect(
-      getByText(EN_Translation.shareprofile.shareoobi.title)
-    ).toBeVisible();
-    expect(getByTestId("share-profile-qr-code")).toBeVisible();
-    expect(
-      getByText(EN_Translation.shareprofile.buttons.provide)
-    ).toBeVisible();
-    expect(getByText(EN_Translation.shareprofile.buttons.scan)).toBeVisible();
-
-    fireEvent.click(getByText(EN_Translation.shareprofile.buttons.close));
-    expect(closeModal).toBeCalled();
-  });
-
-  test("Scan oobi: Success", async () => {
-    getPlatformMock.mockImplementation(() => ["ios"]);
-    addListener.mockImplementation(
-      (
-        eventName: string,
-        listenerFunc: (result: BarcodesScannedEvent) => void
-      ) => {
-        setTimeout(() => {
-          listenerFunc({
-            barcodes,
-          });
-        }, 100);
-
-        return {
-          remove: jest.fn(),
-        };
-      }
-    );
-
-    const storeMocked = makeTestStore(initialState);
-
-    const { getByTestId } = render(
-      <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
-      </Provider>
-    );
-
-    fireEvent(
-      getByTestId("share-profile-segment"),
-      new CustomEvent("ionChange", {
-        detail: { value: "scan" },
-      })
-    );
-
-    await waitFor(() => {
-      expect(getByTestId("scan")).toBeVisible();
-    });
-
-    await waitFor(() => {
-      expect(connectByOobiUrlMock).toBeCalledWith(
-        barcodes[0].rawValue,
-        profileCacheFixData.defaultProfile
-      );
-    });
-  });
-
-  test("Scan oobi: missing alias", async () => {
-    getPlatformMock.mockImplementation(() => ["ios"]);
-    addListener.mockImplementation(
-      (
-        eventName: string,
-        listenerFunc: (result: BarcodesScannedEvent) => void
-      ) => {
-        setTimeout(() => {
-          listenerFunc({
-            barcodes: [
-              {
-                displayValue:
-                  "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p",
-                format: BarcodeFormat.QrCode,
-                rawValue:
-                  "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p",
-                valueType: BarcodeValueType.Url,
-              },
-            ],
-          });
-        }, 100);
-
-        return {
-          remove: jest.fn(),
-        };
-      }
-    );
-
-    const dispatchMock = jest.fn();
-    const storeMocked = {
-      ...makeTestStore(initialState),
-      dispatch: dispatchMock,
-    };
-
-    const { getByTestId } = render(
-      <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
-      </Provider>
-    );
-
-    fireEvent(
-      getByTestId("share-profile-segment"),
-      new CustomEvent("ionChange", {
-        detail: { value: "scan" },
-      })
-    );
-
-    await waitFor(() => {
-      expect(getByTestId("scan")).toBeVisible();
-    });
-
-    await waitFor(() => {
-      expect(dispatchMock).toBeCalledWith(
-        setMissingAliasConnection({
-          url: "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p",
-          identifier: profileCacheFixData.defaultProfile,
-        })
-      );
-    });
-  });
-
-  test("Scan oobi: invalid url", async () => {
-    getPlatformMock.mockImplementation(() => ["ios"]);
-    addListener.mockImplementation(
-      (
-        eventName: string,
-        listenerFunc: (result: BarcodesScannedEvent) => void
-      ) => {
-        setTimeout(() => {
-          listenerFunc({
-            barcodes: [
-              {
-                displayValue:
-                  "http://dev.keria.cf-keripy.metadata.dev.cf-deployments.org/oobi/string1/?groupId=72e2f089cef6",
-                format: BarcodeFormat.QrCode,
-                rawValue: "http://dev",
-                valueType: BarcodeValueType.Url,
-              },
-            ],
-          });
-        }, 100);
-
-        return {
-          remove: jest.fn(),
-        };
-      }
-    );
-
-    const dispatchMock = jest.fn();
-    const storeMocked = {
-      ...makeTestStore(initialState),
-      dispatch: dispatchMock,
-    };
-
-    const { getByTestId } = render(
-      <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
-      </Provider>
-    );
-
-    fireEvent(
-      getByTestId("share-profile-segment"),
-      new CustomEvent("ionChange", {
-        detail: { value: "scan" },
-      })
-    );
-
-    await waitFor(() => {
-      expect(getByTestId("scan")).toBeVisible();
-    });
-
-    await waitFor(() => {
-      expect(dispatchMock).toBeCalledWith(
-        setToastMsg(ToastMsgType.SCANNER_ERROR)
-      );
-    });
-  });
-
-  test("Scan oobi: duplicate connection", async () => {
-    getPlatformMock.mockImplementation(() => ["ios"]);
-    addListener.mockImplementation(
-      (
-        eventName: string,
-        listenerFunc: (result: BarcodesScannedEvent) => void
-      ) => {
-        setTimeout(() => {
-          listenerFunc({
-            barcodes: [
-              {
-                displayValue:
-                  "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p?name=CF%20Credential%20Issuance",
-                format: BarcodeFormat.QrCode,
-                rawValue:
-                  "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p?name=CF%20Credential%20Issuance",
-                valueType: BarcodeValueType.Url,
-              },
-            ],
-          });
-        }, 100);
-
-        return {
-          remove: jest.fn(),
-        };
-      }
-    );
-
-    const state = {
-      ...initialState,
-    };
-
-    // Seed the scanned connection id into the current profile for this test
-    const defaultProfile = state.profilesCache.defaultProfile;
-    if (defaultProfile) {
-      const sampleConn = { ...connectionsFix[0] };
-      sampleConn.id = "EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6";
-
-      state.profilesCache = {
-        ...state.profilesCache,
-        profiles: {
-          ...state.profilesCache.profiles,
-          [defaultProfile]: {
-            ...state.profilesCache.profiles[defaultProfile],
-            connections: [
-              ...(state.profilesCache.profiles[defaultProfile].connections ||
-                []),
-              sampleConn,
-            ],
-          },
-        },
-      };
-    }
-
-    const dispatchMock = jest.fn();
-    const storeMocked = {
-      ...makeTestStore(state),
-      dispatch: dispatchMock,
-    };
-
-    const { getByTestId } = render(
-      <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
-      </Provider>
-    );
-
-    fireEvent(
-      getByTestId("share-profile-segment"),
-      new CustomEvent("ionChange", {
-        detail: { value: "scan" },
-      })
-    );
-
-    await waitFor(() => {
-      expect(getByTestId("scan")).toBeVisible();
-    });
-
-    await waitFor(() => {
-      expect(dispatchMock).toBeCalledWith(
-        setOpenConnectionId("EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6")
-      );
-    });
-  });
-
-  test("Scan oobi: unknown error", async () => {
-    getPlatformMock.mockImplementation(() => ["ios"]);
-    addListener.mockImplementation(
-      (
-        eventName: string,
-        listenerFunc: (result: BarcodesScannedEvent) => void
-      ) => {
-        setTimeout(() => {
-          listenerFunc({
-            barcodes: [
-              {
-                displayValue:
-                  "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p?name=CF%20Credential%20Issuance",
-                format: BarcodeFormat.QrCode,
-                rawValue:
-                  "http://keria:3902/oobi/EKDTSzuyUb7ICP1rFzrFGXc1AwC4yFtTkzIHbbjoJDO6/agent/EJqSoWGc6xyYisiaFKsuut159p?name=CF%20Credential%20Issuance",
-                valueType: BarcodeValueType.Url,
-              },
-            ],
-          });
-        }, 100);
-
-        return {
-          remove: jest.fn(),
-        };
-      }
-    );
-
-    const dispatchMock = jest.fn();
-    const storeMocked = {
-      ...makeTestStore(initialState),
-      dispatch: dispatchMock,
-    };
-
-    connectByOobiUrlMock.mockImplementation(() =>
-      Promise.reject(new Error("Error"))
-    );
-
-    const { getByTestId } = render(
-      <Provider store={storeMocked}>
-        <ShareProfile
-          oobi="oobi"
-          isOpen
-          setIsOpen={jest.fn()}
-        />
-      </Provider>
-    );
-
-    fireEvent(
-      getByTestId("share-profile-segment"),
-      new CustomEvent("ionChange", {
-        detail: { value: "scan" },
-      })
-    );
-
-    await waitFor(() => {
-      expect(getByTestId("scan")).toBeVisible();
-    });
-
-    await waitFor(() => {
-      expect(dispatchMock).toBeCalledWith(showGenericError(true));
-    });
-  });
-
   test("Render default screen", async () => {
     const initialState = {
       stateCache: {
@@ -586,8 +270,178 @@ describe("Setup Connections", () => {
 
     await waitFor(() => {
       expect(
-        getByText(multisignIdentifierFix[0].groupMetadata!.proposedUsername)
+        getByText(
+          multisignIdentifierFix[0].groupMetadata?.proposedUsername || ""
+        )
       ).toBeVisible();
+    });
+  });
+
+  test("Initiator - scan 3 members but select 2", async () => {
+    const initialState = {
+      stateCache: {
+        routes: [TabsRoutePath.CONNECTIONS],
+        authentication: {
+          loggedIn: true,
+          time: Date.now(),
+          passcodeIsSet: true,
+          passwordIsSet: false,
+        },
+      },
+      profilesCache: {
+        defaultProfile: multisignIdentifierFix[0].id,
+        profiles: {
+          [multisignIdentifierFix[0].id]: {
+            identity: {
+              ...multisignIdentifierFix[0],
+              creationStatus: CreationStatus.PENDING,
+            },
+            connections: [],
+            multisigConnections: [
+              {
+                id: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+                label: "Member1",
+                createdAtUTC: "2025-09-19T10:35:27.838Z",
+                status: ConnectionStatus.CONFIRMED,
+                oobi: "https://keria-ext.dev.idw-sandboxes.cf-deployments.org/oobi/EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2/agent/EOf2XGHRW_94wyPkBFwNRupyTdWlhbD-qzQIzXWRIA7u?name=Leader&groupId=0AB-FeKhcGbqGs6Ao39SytSw&groupName=Group+Name",
+                contactId: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+                groupId: "0AB-FeKhcGbqGs6Ao39SytSw",
+              },
+              {
+                id: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d3",
+                label: "Leader",
+                createdAtUTC: "2025-09-19T10:35:27.838Z",
+                status: ConnectionStatus.CONFIRMED,
+                oobi: "https://keria-ext.dev.idw-sandboxes.cf-deployments.org/oobi/EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2/agent/EOf2XGHRW_94wyPkBFwNRupyTdWlhbD-qzQIzXWRIA7u?name=Leader&groupId=0AB-FeKhcGbqGs6Ao39SytSw&groupName=Group+Name",
+                contactId: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d3",
+                groupId: "0AB-FeKhcGbqGs6Ao39SytSw",
+              },
+            ],
+            peerConnections: [],
+            credentials: [],
+            archivedCredentials: [],
+            notifications: [],
+          },
+        },
+      },
+    };
+
+    const storeMocked = makeTestStore(initialState);
+
+    const history = createMemoryHistory();
+    history.push(
+      RoutePath.GROUP_PROFILE_SETUP.replace(":id", multisignIdentifierFix[0].id)
+    );
+
+    const { getByText } = render(
+      <Provider store={storeMocked}>
+        <IonReactMemoryRouter history={history}>
+          <Route
+            path={RoutePath.GROUP_PROFILE_SETUP}
+            component={SetupGroupProfile}
+          />
+        </IonReactMemoryRouter>
+      </Provider>
+    );
+
+    expect(
+      getByText(EN_TRANS.setupgroupprofile.initgroup.members)
+    ).toBeVisible();
+
+    await waitFor(() => {
+      getByText(
+        EN_TRANS.setupgroupprofile.initgroup.numberofmember.replace(
+          "{{members}}",
+          "2"
+        )
+      );
+    });
+  });
+
+  test("Member - scan 3 members but select 2", async () => {
+    const initialState = {
+      stateCache: {
+        routes: [TabsRoutePath.CONNECTIONS],
+        authentication: {
+          loggedIn: true,
+          time: Date.now(),
+          passcodeIsSet: true,
+          passwordIsSet: false,
+        },
+      },
+      profilesCache: {
+        defaultProfile: multisignIdentifierFix[0].id,
+        profiles: {
+          [multisignIdentifierFix[0].id]: {
+            identity: {
+              ...multisignIdentifierFix[0],
+              creationStatus: CreationStatus.PENDING,
+              groupMetadata: {
+                groupId: "549eb79f-856c-4bb7-8dd5-d5eed865906a",
+                groupCreated: false,
+                groupInitiator: false,
+                proposedUsername: "test",
+              },
+            },
+            connections: [],
+            multisigConnections: [
+              {
+                id: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+                label: "Member1",
+                createdAtUTC: "2025-09-19T10:35:27.838Z",
+                status: ConnectionStatus.CONFIRMED,
+                oobi: "https://keria-ext.dev.idw-sandboxes.cf-deployments.org/oobi/EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2/agent/EOf2XGHRW_94wyPkBFwNRupyTdWlhbD-qzQIzXWRIA7u?name=Leader&groupId=0AB-FeKhcGbqGs6Ao39SytSw&groupName=Group+Name",
+                contactId: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2",
+                groupId: "0AB-FeKhcGbqGs6Ao39SytSw",
+              },
+              {
+                id: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d3",
+                label: "Leader",
+                createdAtUTC: "2025-09-19T10:35:27.838Z",
+                status: ConnectionStatus.CONFIRMED,
+                oobi: "https://keria-ext.dev.idw-sandboxes.cf-deployments.org/oobi/EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d2/agent/EOf2XGHRW_94wyPkBFwNRupyTdWlhbD-qzQIzXWRIA7u?name=Leader&groupId=0AB-FeKhcGbqGs6Ao39SytSw&groupName=Group+Name",
+                contactId: "EGpdFYdBkhbMBqTkUGaYeHmu0cX0EgxohGXwY6uLa2d3",
+                groupId: "0AB-FeKhcGbqGs6Ao39SytSw",
+              },
+            ],
+            peerConnections: [],
+            credentials: [],
+            archivedCredentials: [],
+            notifications: [notificationsFix[3]],
+          },
+        },
+      },
+    };
+
+    const storeMocked = makeTestStore(initialState);
+
+    const history = createMemoryHistory();
+    history.push(
+      RoutePath.GROUP_PROFILE_SETUP.replace(":id", multisignIdentifierFix[0].id)
+    );
+
+    const { getByText } = render(
+      <Provider store={storeMocked}>
+        <IonReactMemoryRouter history={history}>
+          <Route
+            path={RoutePath.GROUP_PROFILE_SETUP}
+            component={SetupGroupProfile}
+          />
+        </IonReactMemoryRouter>
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(
+        getByText(EN_TRANS.setupgroupprofile.pending.request)
+      ).toBeVisible();
+
+      getByText(
+        EN_TRANS.setupgroupprofile.initgroup.numberofmember.replace(
+          "{{members}}",
+          "2"
+        )
+      );
     });
   });
 });

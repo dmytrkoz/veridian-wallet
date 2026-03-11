@@ -134,7 +134,7 @@ jest.mock("../../../core/agent/agent", () => ({
         save: jest.fn(),
         createOrUpdateBasicRecord: (param: unknown) =>
           createOrUpdateMock(param),
-        deleteById: jest.fn(),
+        deleteById: jest.fn(() => Promise.resolve(true)),
       },
       auth: {
         verifySecret: verifySecretMock,
@@ -302,7 +302,7 @@ describe("Individual profile details page", () => {
     });
 
     await waitFor(() => {
-      expect(getByTestId("share-connection-modal")).toBeVisible();
+      expect(getByTestId("share-profile")).toBeVisible();
     });
   });
 
@@ -333,7 +333,7 @@ describe("Individual profile details page", () => {
 
     await waitFor(() =>
       expect(
-        getByText(EN_TRANSLATIONS.profiledetails.options.inner.label)
+        getByText(EN_TRANSLATIONS.profiledetails.options.inner.usernamelabel)
       ).toBeInTheDocument()
     );
   });
@@ -520,6 +520,73 @@ describe("Individual profile details page", () => {
     expect(
       queryByTestId("delete-button-identifier-card-details")
     ).not.toBeInTheDocument();
+  });
+
+  test("Rotate key", async () => {
+    const initialStateKeri = {
+      stateCache: {
+        routes: [TabsRoutePath.CREDENTIALS],
+        authentication: {
+          loggedIn: true,
+          time: Date.now(),
+          passcodeIsSet: true,
+          passwordIsSet: false,
+        },
+        toastMsgs: [],
+        isOnline: true,
+      },
+      seedPhraseCache: {
+        seedPhrase: "",
+        bran: "bran",
+      },
+      profilesCache: profileCacheFixData,
+      biometricsCache: {
+        enabled: false,
+      },
+    };
+
+    const storeMockedAidKeri = {
+      ...makeTestStore(initialStateKeri),
+      dispatch: dispatchMock,
+    };
+
+    const { queryByTestId, getByTestId, getByText } = render(
+      <Provider store={storeMockedAidKeri}>
+        <ProfileDetailsModal
+          profileId="ED4KeyyTKFj-72B008OTGgDCrFo6y7B2B73kfyzu5Inb"
+          pageId={pageId}
+          isOpen
+          setIsOpen={jest.fn}
+          showProfiles={jest.fn}
+        />
+      </Provider>
+    );
+    expect(
+      getByTestId("identifier-card-detail-spinner-container")
+    ).toBeVisible();
+
+    await waitFor(() => {
+      expect(queryByTestId("identifier-card-detail-spinner-container")).toBe(
+        null
+      );
+    });
+
+    await waitFor(() =>
+      expect(queryByTestId("identifier-card-detail-spinner-container")).toBe(
+        null
+      )
+    );
+
+    act(() => {
+      fireEvent.click(getByTestId("rotate-keys-button"));
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("rotate-key-title")).toBeVisible();
+      expect(getByTestId("rotate-key-title").innerHTML).toBe(
+        EN_TRANSLATIONS.tabs.home.tab.modals.rotatekeys.title
+      );
+    });
   });
 });
 
@@ -765,7 +832,7 @@ describe("Group profile details page", () => {
     });
   });
 
-  test("Open signing threshold", async () => {
+  test("Click on signing threshold", async () => {
     const { getByText, getAllByText, getByTestId } = render(
       <Provider store={storeMockedAidKeri}>
         <ProfileDetailsModal
@@ -805,10 +872,22 @@ describe("Group profile details page", () => {
             .propexplain.content
         )
       ).toBeVisible();
+      expect(
+        getByText(
+          EN_TRANSLATIONS.profiledetails.detailsmodal.signingthreshold.threshold
+            .recovery.explaintitle
+        )
+      ).toBeVisible();
+      expect(
+        getByText(
+          EN_TRANSLATIONS.profiledetails.detailsmodal.signingthreshold.threshold
+            .recovery.explain
+        )
+      ).toBeVisible();
     });
   });
 
-  test("Open rotation threshold", async () => {
+  test("Click on rotate threshold", async () => {
     const { getByText, getAllByText, getByTestId } = render(
       <Provider store={storeMockedAidKeri}>
         <ProfileDetailsModal
@@ -820,7 +899,6 @@ describe("Group profile details page", () => {
         />
       </Provider>
     );
-
     expect(
       getByTestId("identifier-card-detail-spinner-container")
     ).toBeVisible();
@@ -839,14 +917,26 @@ describe("Group profile details page", () => {
     await waitFor(() => {
       expect(
         getByText(
-          EN_TRANSLATIONS.profiledetails.detailsmodal.rotationthreshold
+          EN_TRANSLATIONS.profiledetails.detailsmodal.signingthreshold
             .propexplain.title
         )
       ).toBeVisible();
       expect(
         getByText(
-          EN_TRANSLATIONS.profiledetails.detailsmodal.rotationthreshold
+          EN_TRANSLATIONS.profiledetails.detailsmodal.signingthreshold
             .propexplain.content
+        )
+      ).toBeVisible();
+      expect(
+        getByText(
+          EN_TRANSLATIONS.profiledetails.detailsmodal.signingthreshold.threshold
+            .recovery.explaintitle
+        )
+      ).toBeVisible();
+      expect(
+        getByText(
+          EN_TRANSLATIONS.profiledetails.detailsmodal.signingthreshold.threshold
+            .recovery.explain
         )
       ).toBeVisible();
     });

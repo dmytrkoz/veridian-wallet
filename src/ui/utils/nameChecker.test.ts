@@ -1,4 +1,4 @@
-import { nameChecker } from "./nameChecker";
+import { nameChecker, uniqueGroupName } from "./nameChecker";
 
 describe("nameChecker", () => {
   it("should return true if name contains valid characters", () => {
@@ -21,5 +21,26 @@ describe("nameChecker", () => {
   it("should return true if name has normal characters and space character", () => {
     const name = "Name of you";
     expect(nameChecker.hasNonSpaceCharacter(name)).toBe(true);
+  });
+});
+
+describe("uniqueGroupName", () => {
+  const profiles = ["Veridian", "Veridian #2"];
+
+  test("returns base name if not used", () => {
+    const result = uniqueGroupName("NewGroup", profiles);
+    expect(result).toBe("NewGroup");
+  });
+
+  test("returns next available number if base name exists", () => {
+    const existing = ["Veridian"];
+    const result = uniqueGroupName("Veridian", existing);
+    expect(result).toBe("Veridian #2");
+  });
+
+  test("returns next available number if #2 exists", () => {
+    const existing = ["Veridian", "Veridian #2"];
+    const result = uniqueGroupName("Veridian", existing);
+    expect(result).toBe("Veridian #3");
   });
 });

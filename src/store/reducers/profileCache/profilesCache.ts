@@ -18,7 +18,10 @@ import {
   Profile,
   ProfileCache,
 } from "./profilesCache.types";
+import { getNotificationsPreferences } from "../notificationsPreferences/notificationsPreferences";
 import { showError } from "../../../ui/utils/error";
+import { setToastMsg } from "../stateCache";
+import { ToastMsgType } from "../../../ui/globals/types";
 
 // Shared empty arrays — return these to keep selector return references stable
 const DefaultArrayValue = {
@@ -183,11 +186,30 @@ export const profilesCacheSlice = createSlice({
     deleteNotificationById: (state, action: PayloadAction<string>) => {
       if (!state.defaultProfile) return;
       const defaultProfile = state.profiles[state.defaultProfile];
-      if (!defaultProfile) return;
 
-      defaultProfile.notifications = defaultProfile.notifications.filter(
-        (notification) => notification.id !== action.payload
-      );
+      if (defaultProfile) {
+        const idx = defaultProfile.notifications.findIndex(
+          (notification) => notification.id === action.payload
+        );
+
+        if (idx !== -1) {
+          defaultProfile.notifications.splice(idx, 1);
+          return;
+        }
+      }
+
+      for (const profile of Object.values(state.profiles)) {
+        if (profile === defaultProfile) continue;
+
+        const idx = profile.notifications.findIndex(
+          (notification) => notification.id === action.payload
+        );
+
+        if (idx !== -1) {
+          profile.notifications.splice(idx, 1);
+          break;
+        }
+      }
     },
     addNotification: (state, action: PayloadAction<KeriaNotification>) => {
       const targetProfile = state.profiles[action.payload.receivingPre];
@@ -474,11 +496,45 @@ export const addGroupProfileAsync =
     );
   };
 
+export const switchProfileFromNotification =
+  (profileId: string) =>
+  async (dispatch: AppDispatch, getState: () => RootState) => {
+    const profiles = getState().profilesCache.profiles;
+    let savedProfile = profileId;
+
+    if (Object.values(profiles).length == 0) {
+      savedProfile = "";
+      dispatch(setCurrentProfile(""));
+    }
+
+    if (profiles[profileId]) {
+      dispatch(setCurrentProfile(profileId));
+      dispatch(setMissingAliasConnection(undefined));
+    } else {
+      dispatch(setToastMsg(ToastMsgType.PROFILE_NOT_EXIST));
+      return false;
+    }
+
+    await Agent.agent.basicStorage.createOrUpdateBasicRecord(
+      new BasicRecord({
+        id: MiscRecordId.DEFAULT_PROFILE,
+        content: { defaultProfile: savedProfile },
+      })
+    );
+
+    return true;
+  };
+
 export const handleNotificationReceived =
   (notification: KeriaNotification) =>
   async (_dispatch: AppDispatch, getState: () => RootState) => {
     const state = getState();
     const currentProfile = getCurrentProfile(state);
+    const notificationsPreferences = getNotificationsPreferences(state);
+
+    if (!notificationsPreferences.enabled) {
+      return;
+    }
     const currentProfileId = currentProfile?.identity.id;
 
     if (!currentProfileId || notification.receivingPre === currentProfileId) {
