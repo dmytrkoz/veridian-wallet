@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <suppress>
+        <notes><![CDATA[
+        file name: tika-core-2.9.4.jar
+        This is a transitive dependency of allure-commandline (devDependency).
+        It is not used in production or in the final application bundle.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.tika/tika-core@.*$</packageUrl>
+        <cve>CVE-2025-54988</cve>
+        <cve>CVE-2025-66516</cve>
+    </suppress>
+</suppressions>

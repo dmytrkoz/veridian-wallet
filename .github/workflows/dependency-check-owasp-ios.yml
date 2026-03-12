@@ -44,7 +44,7 @@ jobs:
           path: "ios"
           format: "ALL"
           out: "reports"
-          args: "--failOnCVSS 7 --nvdApiKey ${{ env.NVD_API_KEY }} -s **/Podfile.lock"
+          args: "--failOnCVSS 7 --nvdApiKey ${{ env.NVD_API_KEY }} --suppression dependency-check-suppression.xml"
         continue-on-error: false
 
       - name: Upload HTML report
