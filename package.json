@@ -148,10 +148,10 @@
       "@capacitor/core": "^7.0.0",
       "@capacitor/ios": "^7.0.0"
     },
-    "axios": "1.13.6",
+    "axios": "^1.13.6",
     "base-x": "^4.0.0",
-    "qs": "6.15.0",
-    "@types/qs": "npm:qs@6.15.0",
+    "qs": "^6.15.0",
+    "@types/qs": "npm:qs@^6.15.0",
     "validate.js": "^0.13.1",
     "sharp": {
       "@img/sharp-libvips-linux-ppc64": "1.2.0",

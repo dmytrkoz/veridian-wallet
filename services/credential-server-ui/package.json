@@ -60,6 +60,6 @@
     "**/*": "prettier --write --ignore-unknown"
   },
   "overrides": {
-    "qs": "6.15.0"
+    "qs": "^6.15.0"
   }
 }
