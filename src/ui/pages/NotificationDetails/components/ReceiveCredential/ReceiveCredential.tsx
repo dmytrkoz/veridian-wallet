@@ -7,7 +7,7 @@ import {
   personCircleOutline,
   swapHorizontalOutline,
 } from "ionicons/icons";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Agent } from "../../../../../core/agent/agent";
 import {
   ACDCDetails,
@@ -52,6 +52,7 @@ import "./ReceiveCredential.scss";
 const ANIMATION_DELAY = 2600;
 // Cache viewport height on initial load to prevent issues with mobile browsers resizing the viewport when showing/hiding the keyboard, which can cause unwanted jumps in the animation.
 const INITIAL_VIEWPORT_HEIGHT = window.innerHeight;
+const POLLING_INTERVAL = 1000;
 
 const ReceiveCredential = ({
   pageId,
@@ -189,6 +190,12 @@ const ReceiveCredential = ({
     notificationDetails.a.d,
     isAccepting,
   ]);
+
+  useEffect(() => {
+    if (!credDetail || !isMultisig) return;
+    const id = setInterval(getMultiSigMemberStatus, POLLING_INTERVAL);
+    return () => clearInterval(id);
+  }, [getMultiSigMemberStatus, credDetail, isMultisig]);
 
   useOnlineStatusEffect(getAcdc);
 

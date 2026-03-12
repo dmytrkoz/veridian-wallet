@@ -1,5 +1,5 @@
 import { IonSpinner } from "@ionic/react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Agent } from "../../../../../core/agent/agent";
 import { IdentifierType } from "../../../../../core/agent/services/identifier.types";
 import { CredentialsMatchingApply } from "../../../../../core/agent/services/ipexCommunicationService.types";
@@ -23,6 +23,7 @@ import "./CredentialRequest.scss";
 import { LinkedGroup, RequestCredential } from "./CredentialRequest.types";
 import { CredentialRequestInformation } from "./CredentialRequestInformation";
 
+const POLLING_INTERVAL = 1000;
 const CredentialRequest = ({
   pageId,
   activeStatus,
@@ -57,38 +58,43 @@ const CredentialRequest = ({
     : profiles[credentialRequest.identifier]?.identity.groupMemberPre || null;
 
   const getMultisigInfo = useCallback(async () => {
-    const linkedGroup =
-      await Agent.agent.ipexCommunications.getLinkedGroupFromIpexApply(
-        notificationDetails.id
-      );
+    try {
+      const linkedGroup =
+        await Agent.agent.ipexCommunications.getLinkedGroupFromIpexApply(
+          notificationDetails.id
+        );
 
-    const memberInfos = linkedGroup.members.map((member: string) => {
-      const memberConnection = multisignConnectionsCache.find(
-        (c) => c.id === member
-      );
-      if (!memberConnection) {
+      const memberInfos = linkedGroup.members.map((member: string) => {
+        const memberConnection = multisignConnectionsCache.find(
+          (c) => c.id === member
+        );
+        if (!memberConnection) {
+          return {
+            aid: member,
+            name: currentProfile?.identity.groupUsername || "",
+            joined: linkedGroup.linkedRequest.accepted,
+            isCurrentUser: true,
+          };
+        }
+
         return {
           aid: member,
-          name: currentProfile?.identity.groupUsername || "",
-          joined: linkedGroup.linkedRequest.accepted,
-          isCurrentUser: true,
+          name: memberConnection.label || member,
+          joined: linkedGroup.othersJoined.includes(member),
+          isCurrentUser: false,
         };
-      }
+      });
 
-      return {
-        aid: member,
-        name: memberConnection.label || member,
-        joined: linkedGroup.othersJoined.includes(member),
-        isCurrentUser: false,
-      };
-    });
-
-    setLinkedGroup({
-      ...linkedGroup,
-      memberInfos,
-    });
+      setLinkedGroup({
+        ...linkedGroup,
+        memberInfos,
+      });
+    } catch (e) {
+      showError("Unable to get linked group detail", e, dispatch);
+    }
   }, [
     currentProfile?.identity.groupUsername,
+    dispatch,
     multisignConnectionsCache,
     notificationDetails.id,
   ]);
@@ -125,6 +131,20 @@ const CredentialRequest = ({
     dispatch,
     notificationExists,
   ]);
+
+  useEffect(() => {
+    if (!credentialRequest) return;
+
+    const profile = profiles[credentialRequest.identifier];
+
+    const isGroup =
+      profile?.identity.groupMemberPre || profile?.identity.groupMetadata;
+    if (!isGroup) return;
+
+    const id = setInterval(getMultisigInfo, POLLING_INTERVAL);
+
+    return () => clearInterval(id);
+  }, [getMultisigInfo, credentialRequest, profiles]);
 
   useOnlineStatusEffect(getCrendetialRequest);
 
