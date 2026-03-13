@@ -182,7 +182,8 @@
       "@img/sharp-wasm32": "^0.34.5",
       "@img/sharp-win32-ia32": "^0.34.5",
       "@img/sharp-win32-x64": "^0.34.5"
-    }
+    },
+    "flatted": "^3.4.0"
   },
   "eslintConfig": {
     "extends": [
