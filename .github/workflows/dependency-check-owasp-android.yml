@@ -42,17 +42,7 @@ jobs:
         uses: dependency-check/Dependency-Check_Action@2ba636726705b0f74f126ebeaacaf2ad4600b967 # main at 01/10/2025
         with:
           project: "veridian-wallet-android"
-          path: "android"
-          format: "ALL"
-          out: "reports"
-          args: "--failOnCVSS 7 --nvdApiKey ${{ env.NVD_API_KEY }} --suppression dependency-check-suppression.xml"
-        continue-on-error: false
-
-      - name: Run Dependency-Check
-        uses: dependency-check/Dependency-Check_Action@2ba636726705b0f74f126ebeaacaf2ad4600b967 # main at 01/10/2025
-        with:
-          project: "veridian-wallet-android"
-          path: "node_modules"
+          path: "."
           format: "ALL"
           out: "reports"
           args: "--failOnCVSS 7 --nvdApiKey ${{ env.NVD_API_KEY }} --suppression dependency-check-suppression.xml"
@@ -63,7 +53,7 @@ jobs:
         if: always()
         with:
           name: depcheck-android-report
-          path: "./dependency-check-report.html"
+          path: "reports/dependency-check-report.html"
 
       - name: Upload SARIF to code scanning
         uses: github/codeql-action/upload-sarif@3599b3baa15b485a2e49ef411a7a4bb2452e7f93 # v3.30.5

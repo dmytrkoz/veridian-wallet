@@ -34,11 +34,6 @@ reason = "glob: Command injection - Conflict with ts-node/rimraf"
 ignoreUntil = 2027-01-11
 
 [[IgnoredVulns]]
-id = "GHSA-mh29-5h37-fv8m"
-reason = "js-yaml: Only reads our config or jest/eslint related - low risk"
-ignoreUntil = 2027-01-11
-
-[[IgnoredVulns]]
 id = "GHSA-v6h2-p8h4-qcjw"
 reason = "brace-expansion: e2e tests or linting - low risk"
 ignoreUntil = 2027-01-11

@@ -32,7 +32,7 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: "package.json"
-
+  
       - name: Install dependencies
         run: npm ci
 
@@ -41,7 +41,7 @@ jobs:
         uses: dependency-check/Dependency-Check_Action@2ba636726705b0f74f126ebeaacaf2ad4600b967 # main at 01/10/2025
         with:
           project: "veridian-wallet-ios"
-          path: "ios"
+          path: "."
           format: "ALL"
           out: "reports"
           args: "--failOnCVSS 7 --nvdApiKey ${{ env.NVD_API_KEY }} --suppression dependency-check-suppression.xml"
@@ -51,8 +51,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: depcheck-android-report
-          path: "./dependency-check-report.html"
+          name: depcheck-ios-report
+          path: "reports/dependency-check-report.html"
 
       - name: Upload SARIF to code scanning
         uses: github/codeql-action/upload-sarif@3599b3baa15b485a2e49ef411a7a4bb2452e7f93 # v3.30.5
