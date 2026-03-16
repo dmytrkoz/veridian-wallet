@@ -1029,7 +1029,6 @@ describe("Creation of multi-sig", () => {
   });
 
   test("Can join a 3-person group and share OOBI with multiple members", async () => {
-
     // Create a 3-person group exn message
     const threePersonGroupExn = {
       ...getRequestMultisigIcp,

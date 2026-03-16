@@ -29,7 +29,7 @@ const ConnectionHistoryEvent = ({
     >
       <div className="connection-details-logo">
         {historyItem.type ===
-          ConnectionHistoryType.CREDENTIAL_REQUEST_PRESENT ? (
+        ConnectionHistoryType.CREDENTIAL_REQUEST_PRESENT ? (
           <FallbackIcon
             src={connectionDetails?.logo}
             alt="connection-logo"
