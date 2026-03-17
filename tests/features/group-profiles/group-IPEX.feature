@@ -24,15 +24,14 @@ Feature: Group Profile Multisig (Initiator and Members)
     And Alice sends the group requests
     And all members accept the group invitation
     Then the group status becomes "Active" when the group is ready
-    When IPEX Alice connects the active group to the credential issuer
-    And IPEX the credential issuer offers a "Rare EVO 2024 Attendee" credential to Alice's group
+    When IPEX Alice connects the credential issuer
+    And IPEX the credential issuer offers a "<acdc>" credential to Alice's group
     Then IPEX Alice receives the offered credential as the initiator
-    When IPEX the credential issuer requests presentation of the "Rare EVO 2024 Attendee" credential from Alice's group
     Then IPEX Alice presents the requested credential as the initiator
 
     Examples:
-      | required | recovery | members        |
-      | 1        | 2        | Bob            |
+      | required | recovery | members        | acdc                   |
+      | 1        | 2        | Bob            | Rare EVO 2024 Attendee |
     #  | 2        | 2        | Bob            |
     #  | 2        | 3        | Bob,Charlie    |
     #  | 3        | 3        | Bob,Charlie    |

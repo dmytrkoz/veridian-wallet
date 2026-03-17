@@ -103,11 +103,8 @@ export class VirtualWallet {
       const result = await this.client.oobis().get(this.aidName, role);
       this.oobi = result.oobis[0];
     }
-    if (!this.oobi) {
-      throw new Error("KERIA oobis.get returned no OOBI URL");
-    }
 
-    let url = this.oobi;
+    let url = this.oobi!;
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
       const base = this.config.connectUrl.replace(/\/$/, "");
       url = url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
@@ -362,7 +359,7 @@ export class Issuer extends VirtualWallet {
   }
 
   async issueCredential(params: {
-    registryId: string,
+    registry: string,
     schemaSaid: string,
     recipientId: string,
     claims: any
@@ -372,7 +369,7 @@ export class Issuer extends VirtualWallet {
     const result = await this.client.credentials().issue(
       this.aidName,
       {
-        ri: params.registryId,
+        ri: params.registry,
         s: params.schemaSaid,
         a: {
           i: params.recipientId,
