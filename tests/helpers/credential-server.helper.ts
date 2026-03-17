@@ -1,5 +1,3 @@
-import { getKeriaUrlsForTestRunner, getSSIAgentUrls } from "./ssi-agent-urls.helper.js";
-
 export const CF_CREDENTIAL_ISSUANCE_ALIAS = "CF Credential Issuance";
 export const RARE_EVO_SCHEMA_SAID = "EJxnJdxkHbRw2wVFNe4IUOPLt8fEtg9Sr3WyTjlgKoIb";
 export const RARE_EVO_SCHEMA_NAME = "Rare EVO 2024 Attendee";
@@ -58,33 +56,15 @@ export async function listIssuerContacts(): Promise<CredentialIssuerContact[]> {
   return requestCredentialServer<CredentialIssuerContact[]>("/contacts");
 }
 
-// export async function resolveWalletOobiForIssuer(walletOobi: string): Promise<void> {
-//   // Don't rewrite the OOBI — the credential server runs in Docker alongside
-//   // KERIA, so the original keria:3902 hostname works directly.
-//   await requestCredentialServer<string>("/resolveOobi", {
-//     method: "POST",
-//     body: JSON.stringify({ oobi: walletOobi }),
-//   });
-// }
-
-function rewriteOobiBase(oobi: string, targetBaseUrl: string): string {
-  const source = new URL(oobi);
-  const target = new URL(targetBaseUrl);
-
-  source.protocol = target.protocol;
-  source.hostname = target.hostname;
-  source.port = target.port;
-
-  return source.toString();
-}
-
 export async function resolveWalletOobiForIssuer(walletOobi: string): Promise<void> {
-  const hostConnectUrl = getKeriaUrlsForTestRunner().connectUrl;
-  const rewrittenOobi = rewriteOobiBase(walletOobi, hostConnectUrl);
-
+  // Don't rewrite the OOBI — the credential server runs in Docker alongside
+  // KERIA, so the original keria:3902 hostname works directly.
+  // Rewriting to 127.0.0.1:3901 breaks resolution because KERIA serves
+  // OOBIs on port 3902 (agent), not 3901 (admin). From inside the Docker
+  // network, keria:3902 is the correct resolvable address.
   await requestCredentialServer<string>("/resolveOobi", {
     method: "POST",
-    body: JSON.stringify({ oobi: rewrittenOobi }),
+    body: JSON.stringify({ oobi: walletOobi }),
   });
 }
 export async function waitForNewIssuerContact(

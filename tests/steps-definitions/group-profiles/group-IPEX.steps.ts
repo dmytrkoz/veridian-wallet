@@ -575,18 +575,19 @@ When(/^IPEX Alice connects the active group to the credential issuer$/, async fu
       }
   );
 
-  // Tell the credential server to resolve the group's multisig OOBI.
-  // This is the server-side "acceptance" of the connection — the credential
-  // server's KERIA agent fetches the group's key state so it can later
-  // issue credentials to / request presentations from this AID.
-  await resolveWalletOobiForIssuer(groupOobi);
-
   // Wait for the connection to become Confirmed (the "Pending" chip disappears).
   // The app resolves the issuer's OOBI asynchronously via KERIA. While that
   // resolution is in progress the connection shows a "Pending" chip. Once KERIA
   // finishes, the app transitions the connection to Confirmed and shares its
   // identifier with the issuer via an /introduce reply. Credential notifications
   // will only arrive after this transition completes.
+  //
+  // IMPORTANT: We wait for this to complete BEFORE asking the credential server
+  // to resolve the group OOBI. Both the wallet and credential server share
+  // the same KERIA instance. Running two OOBI resolutions concurrently
+  // overwhelms KERIA ("skipped stale keystate sig datetime" loops), which
+  // can cause the wallet's notification polling to timeout and the app to
+  // show "You're offline".
   await browser.waitUntil(
       async () => {
         const hasIssuer = await pageBodyContains(CF_CREDENTIAL_ISSUANCE_ALIAS);
@@ -599,11 +600,33 @@ When(/^IPEX Alice connects the active group to the credential issuer$/, async fu
       }
   );
 
-  // Now that both sides have resolved each other, poll the credential server
-  // for the new contact (the group's multisig AID).
+  // Now that the wallet-side resolution is done, tell the credential server
+  // to resolve the group's multisig OOBI. This is the server-side
+  // "acceptance" — the credential server's KERIA agent fetches the group's
+  // key state so it can later issue credentials to this AID.
+  // Doing this sequentially (after Confirmed) avoids the concurrent-resolution
+  // overload that causes stale-keystate storms on the shared KERIA instance.
+  await resolveWalletOobiForIssuer(groupOobi);
+
+  // Give KERIA time to finish processing the group's key state and any
+  // stale-keystate replies before we start issuing credentials.
+  await browser.pause(15000);
+
+  // If KERIA was briefly overwhelmed during the OOBI resolution, the app
+  // might have gone offline. Wait for it to come back.
+  await browser.waitUntil(
+      async () => !(await pageBodyContains("You're offline")),
+      {
+        timeout: 60000,
+        interval: 2000,
+        timeoutMsg: "App did not recover from offline state after OOBI resolution within 60s.",
+      }
+  );
+
+  // Poll the credential server for the new contact (the group's multisig AID).
   const issuerContact = await waitForNewIssuerContact(
       previousIssuerContacts.map((contact) => contact.id),
-      30000
+      60000
   );
   world.credentialIssuerContactId = issuerContact.id;
   world.credentialIssuerNotificationName = CF_CREDENTIAL_ISSUANCE_ALIAS;
@@ -620,13 +643,40 @@ When(
         throw new Error(`Only "${RARE_EVO_SCHEMA_NAME}" is currently supported by this test flow.`);
       }
 
+      // Ensure the app is online before issuing — if KERIA just finished
+      // heavy OOBI processing it may still be recovering.
+      await browser.waitUntil(
+          async () => !(await pageBodyContains("You're offline")),
+          {
+            timeout: 30000,
+            interval: 2000,
+            timeoutMsg: "App is offline before credential issuance.",
+          }
+      );
+
       await issueRareEvoCredential(world.credentialIssuerContactId, "Alice Initiator");
+
+      // Allow KERIA to begin processing the exchange before the wallet
+      // tries to interact with the grant notification.
+      await browser.pause(5000);
     }
 );
 
 Then(/^IPEX Alice receives the offered credential as the initiator$/, async function () {
   const world = this as AliceInitiatorWorld;
   const notificationText = `${world.credentialIssuerNotificationName ?? CF_CREDENTIAL_ISSUANCE_ALIAS} ${ISSUE_NOTIFICATION_TEXT}`;
+
+  // If the app has transiently gone offline (e.g. KERIA was briefly
+  // overwhelmed during the multisig exchange), wait for it to reconnect
+  // before trying to interact with the notification.
+  await browser.waitUntil(
+      async () => !(await pageBodyContains("You're offline")),
+      {
+        timeout: 90000,
+        interval: 2000,
+        timeoutMsg: "App did not recover from offline state within 90s.",
+      }
+  );
 
   await navigateToTab("notifications");
   await openNotificationByText(notificationText);
@@ -636,7 +686,7 @@ Then(/^IPEX Alice receives the offered credential as the initiator$/, async func
   await browser.waitUntil(
       async () => pageBodyContains(RARE_EVO_SCHEMA_NAME),
       {
-        timeout: 30000,
+        timeout: 60000,
         timeoutMsg: `Credential "${RARE_EVO_SCHEMA_NAME}" was not visible in the credentials tab.`,
       }
   );

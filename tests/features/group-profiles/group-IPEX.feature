@@ -32,7 +32,7 @@ Feature: Group Profile Multisig (Initiator and Members)
 
     Examples:
       | required | recovery | members        |
-      | 1        | 2        | Bob            |
-     #| 2        | 2        | Bob            |
-     #| 2        | 3        | Bob,Charlie    |
+     | 1        | 2        | Bob            |
+    # | 2        | 2        | Bob            |
+   #  | 2        | 3        | Bob,Charlie    |
      #| 3        | 3        | Bob,Charlie    |
