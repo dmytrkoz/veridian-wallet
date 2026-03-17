@@ -183,6 +183,14 @@ async function startServer() {
 
     log(`Listening on port ${config.port}`);
   });
+
+  app.use("/keria-oobi", async (req, res) => {
+    const resp = await fetch(`http://keria:3902/oobi${req.url}`);
+    res
+      .status(resp.status)
+      .set("Content-Type", resp.headers.get("Content-Type") || "")
+      .send(await resp.text());
+  });
 }
 
 void startServer();

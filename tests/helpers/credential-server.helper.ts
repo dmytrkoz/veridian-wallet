@@ -20,17 +20,6 @@ export type CredentialIssuerContact = {
 
 const DEFAULT_CREDENTIAL_SERVER_URL = process.env.CREDENTIAL_SERVER_URL || "http://127.0.0.1:3001";
 
-function rewriteOobiBase(oobi: string, targetBaseUrl: string): string {
-  const source = new URL(oobi);
-  const target = new URL(targetBaseUrl);
-
-  source.protocol = target.protocol;
-  source.hostname = target.hostname;
-  source.port = target.port;
-
-  return source.toString();
-}
-
 function getCredentialServerUrl(): string {
   return DEFAULT_CREDENTIAL_SERVER_URL.replace(/\/$/, "");
 }
@@ -49,7 +38,7 @@ async function requestCredentialServer<T>(path: string, init?: RequestInit): Pro
 
   if (!response.ok || !payload?.success) {
     throw new Error(
-      `Credential server request failed for ${path}: ${response.status} ${response.statusText} ${text}`
+        `Credential server request failed for ${path}: ${response.status} ${response.statusText} ${text}`
     );
   }
 
@@ -57,13 +46,36 @@ async function requestCredentialServer<T>(path: string, init?: RequestInit): Pro
 }
 
 export async function getIssuerConnectionOobiForApp(): Promise<string> {
-  const appConnectUrl = getSSIAgentUrls().connectUrl;
-  const rawOobi = await requestCredentialServer<string>("/keriOobi");
-  return rewriteOobiBase(rawOobi, appConnectUrl);
+  // Return the raw OOBI without rewriting. The OOBI URL (e.g. http://keria:3902/...)
+  // is resolved by KERIA inside Docker, not by the app itself. The app merely
+  // passes the URL to KERIA's admin API via signify-ts. Rewriting to 10.0.2.2:3901
+  // breaks resolution because (a) 10.0.2.2 is unreachable from Docker and
+  // (b) KERIA serves OOBIs on port 3902 (agent), not 3901 (admin).
+  return requestCredentialServer<string>("/keriOobi");
 }
 
 export async function listIssuerContacts(): Promise<CredentialIssuerContact[]> {
   return requestCredentialServer<CredentialIssuerContact[]>("/contacts");
+}
+
+// export async function resolveWalletOobiForIssuer(walletOobi: string): Promise<void> {
+//   // Don't rewrite the OOBI — the credential server runs in Docker alongside
+//   // KERIA, so the original keria:3902 hostname works directly.
+//   await requestCredentialServer<string>("/resolveOobi", {
+//     method: "POST",
+//     body: JSON.stringify({ oobi: walletOobi }),
+//   });
+// }
+
+function rewriteOobiBase(oobi: string, targetBaseUrl: string): string {
+  const source = new URL(oobi);
+  const target = new URL(targetBaseUrl);
+
+  source.protocol = target.protocol;
+  source.hostname = target.hostname;
+  source.port = target.port;
+
+  return source.toString();
 }
 
 export async function resolveWalletOobiForIssuer(walletOobi: string): Promise<void> {
@@ -75,10 +87,9 @@ export async function resolveWalletOobiForIssuer(walletOobi: string): Promise<vo
     body: JSON.stringify({ oobi: rewrittenOobi }),
   });
 }
-
 export async function waitForNewIssuerContact(
-  previousContactIds: string[],
-  timeoutMs = 20000
+    previousContactIds: string[],
+    timeoutMs = 20000
 ): Promise<CredentialIssuerContact> {
   const deadline = Date.now() + timeoutMs;
   const previousIds = new Set(previousContactIds);
