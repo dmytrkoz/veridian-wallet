@@ -59,14 +59,12 @@ export async function listIssuerContacts(): Promise<CredentialIssuerContact[]> {
 export async function resolveWalletOobiForIssuer(walletOobi: string): Promise<void> {
   // Don't rewrite the OOBI — the credential server runs in Docker alongside
   // KERIA, so the original keria:3902 hostname works directly.
-  // Rewriting to 127.0.0.1:3901 breaks resolution because KERIA serves
-  // OOBIs on port 3902 (agent), not 3901 (admin). From inside the Docker
-  // network, keria:3902 is the correct resolvable address.
   await requestCredentialServer<string>("/resolveOobi", {
     method: "POST",
     body: JSON.stringify({ oobi: walletOobi }),
   });
 }
+
 export async function waitForNewIssuerContact(
     previousContactIds: string[],
     timeoutMs = 20000
