@@ -10,6 +10,6 @@
     "GHSA-vx5f-vmr6-32wf", // capacitor-native-biometric: Auth bypass - pinned to v7
     "GHSA-2g4f-4pwh-qvx6", // ajv: ReDoS - compatibility conflict with ESLint/Webpack
     "GHSA-5j98-mcp5-4vw2", // glob: Command injection - compatibility conflict with ts-node
-    "GHSA-v6h2-p8h4-qcjw" // e2e tests or linting - low risk
+    "GHSA-gmq8-994r-jv83"  // yauzl@2.10.0 in native-run and extract-zip - fix is a breaking API change (2.x→3.x)
   ]
 }

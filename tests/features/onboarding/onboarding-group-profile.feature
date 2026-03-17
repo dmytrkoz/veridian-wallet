@@ -51,6 +51,6 @@ Feature: Onboarding Group Profile Creation
 
   @onboarding @profile @group
   Scenario: User can navigate to group profile setup screen from Welcome screen
-    Given user has created group profile with group name "Alice" and username "Alice"
+    Given user has created group profile with group name "MultisigGroup" and username "Alice"
     When user taps Continue button on Welcome screen
     Then user can see Group profile setup screen
