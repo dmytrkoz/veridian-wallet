@@ -185,7 +185,7 @@ export class CreatePasswordScreen {
     // Option 1: Try clicking by text content (Light DOM approach)
     // This is the most reliable as it clicks what the user sees
     try {
-      const buttonByText = await $('ion-button*=Add a password');
+      const buttonByText = $('ion-button*=Add a password');
       await buttonByText.waitForDisplayed({ timeout: 5000 });
       await buttonByText.scrollIntoView({ block: "center", inline: "center" });
       await buttonByText.click();

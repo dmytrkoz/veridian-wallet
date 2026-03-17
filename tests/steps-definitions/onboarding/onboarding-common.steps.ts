@@ -83,10 +83,10 @@ async function dismissNotificationPermissionDialog(): Promise<void> {
         let allowButton = null;
         let dontAllowButton = null;
         try {
-          allowButton = await $('//android.widget.Button[@text="Allow" or @text="ALLOW"]');
+          allowButton = $('//android.widget.Button[@text="Allow" or @text="ALLOW"]');
         } catch (e) {}
         try {
-          dontAllowButton = await $('//android.widget.Button[@text="Don\'t allow" or @text="DON\'T ALLOW" or @text="Not now" or @text="Deny" or @text="DENY"]');
+          dontAllowButton = $('//android.widget.Button[@text="Don\'t allow" or @text="DON\'T ALLOW" or @text="Not now" or @text="Deny" or @text="DENY"]');
         } catch (e) {}
         
         // Try to find and click "Don't allow" first (to deny notifications)

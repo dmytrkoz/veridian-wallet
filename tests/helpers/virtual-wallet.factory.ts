@@ -4,7 +4,7 @@
  */
 
 import { ready } from "signify-ts";
-import { VirtualWallet, RemoteInitiator } from "./virtual-wallet";
+import { VirtualWallet, RemoteInitiator, Issuer } from "./virtual-wallet";
 import { getKeriaUrlsForTestRunner } from "./ssi-agent-urls.helper.js";
 
 /** Factory to create a standard Joiner (VirtualWallet) */
@@ -25,6 +25,17 @@ export const createRemoteInitiator = async (
   await ready();
   const config = getKeriaUrlsForTestRunner();
   const user = new RemoteInitiator(alias, config);
+  await user.init();
+  return user;
+};
+
+/** Factory to create an Issuer (Issuer) */
+export const createIssuer = async (
+  alias: string,
+): Promise<Issuer> => {
+  await ready();
+  const config = getKeriaUrlsForTestRunner();
+  const user = new Issuer(alias, config);
   await user.init();
   return user;
 };

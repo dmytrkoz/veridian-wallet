@@ -10,7 +10,7 @@ export const findFilterAndClickElement = async (locator: string) => {
 };
 
 export const findAndClickLocator = async (locator: string) => {
-  const element = await $(locator);
+  const element = $(locator);
   await element.waitForExist();
   await element.waitForDisplayed();
   await element.waitForClickable();

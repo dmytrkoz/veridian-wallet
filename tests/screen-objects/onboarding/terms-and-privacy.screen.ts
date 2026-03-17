@@ -27,7 +27,7 @@ export class TermsAndPrivacyScreen {
 
   async clickTermsTab() {
     // Find the segment button and click the first one (Terms)
-    const buttons = await $$("[data-testid='term-segment-button']");
+    const buttons = $$("[data-testid='term-segment-button']");
     const buttonCount = await buttons.length;
     if (buttonCount > 0) {
       await buttons[0].waitForClickable({ timeout: 5000 });
@@ -39,7 +39,7 @@ export class TermsAndPrivacyScreen {
 
   async clickPrivacyTab() {
     // Find the segment button and click the second one (Privacy)
-    const buttons = await $$("[data-testid='term-segment-button']");
+    const buttons = $$("[data-testid='term-segment-button']");
     const buttonCount = await buttons.length;
     if (buttonCount > 1) {
       await buttons[1].waitForClickable({ timeout: 5000 });
@@ -51,7 +51,7 @@ export class TermsAndPrivacyScreen {
 
   async isTermsTabSelected(): Promise<boolean> {
     // Check if Terms tab is selected by checking the first segment button
-    const buttons = await $$("[data-testid='term-segment-button']");
+    const buttons = $$("[data-testid='term-segment-button']");
     const buttonCount = await buttons.length;
     if (buttonCount > 0) {
       const isSelected = await buttons[0].getAttribute("class");
@@ -62,7 +62,7 @@ export class TermsAndPrivacyScreen {
 
   async isPrivacyTabSelected(): Promise<boolean> {
     // Check if Privacy tab is selected by checking the second segment button
-    const buttons = await $$("[data-testid='term-segment-button']");
+    const buttons = $$("[data-testid='term-segment-button']");
     const buttonCount = await buttons.length;
     if (buttonCount > 1) {
       const isSelected = await buttons[1].getAttribute("class");
