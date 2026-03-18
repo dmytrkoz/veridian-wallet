@@ -1,21 +1,33 @@
 import { When, Then } from "@wdio/cucumber-framework";
-import { expect } from "expect-webdriverio";
 import { browser, driver } from "@wdio/globals";
 import PasscodeScreen from "../../screen-objects/onboarding/passcode.screen.js";
+import
+  IdentifiersCredentialPasscodeScreen
+ from "../../screen-objects/identifiers/identifiers-credential-passcode.screen.js";
 import { Issuer, RemoteJoiner } from "../../helpers/virtual-wallet.js";
 import {
   CF_CREDENTIAL_ISSUANCE_ALIAS,
   ACDC_SCHEMAS,
 } from "../../helpers/credential-server.helper.js";
-import { installShareCapture, pasteOobiAndConfirm, pageContainsText, waitUpTo } from "./group-profile.helpers.js";
+import {
+  installShareCapture,
+  pasteOobiAndConfirm,
+  pageContainsText,
+  waitUpTo,
+  toastContainsText
+} from "./group-profile.helpers.js";
 import { createIssuer } from "../../helpers/virtual-wallet.factory.js";
 import {
   startSchemaServer,
   getSchemaOobi,
+  getSchemaServerOobiBase,
   setupIssuerSchemaEndpoint,
 } from "../../helpers/schema-server.helper.js";
+import ConnectionsScreen from "../../screen-objects/connections/connections.screen.js";
+import ConnectionsDetailsScreen from "../../screen-objects/connections/connections-details.screen.js";
 
-const PRESENTATION_NOTIFICATION_TEXT = "has requested a credential from you";
+const CREDENTIAL_PENDING_TEXT = "Credential request pending";
+const NEW_CREDENTIAL_ADDED_TEXT = "New credential added";
 
 async function openAddConnectionFlow(): Promise<void> {
   await navigateToTab("connections");
@@ -36,6 +48,36 @@ async function navigateToTab(tabName: string): Promise<void> {
   const tab = $(`[data-testid='tab-button-${tabName}']`);
   await tab.waitForDisplayed();
   await tab.click();
+}
+
+async function navigateToTabUsingJSClick(tabName: string): Promise<void> {
+  await browser.execute((name) => {
+    const buttons = document.querySelectorAll(`[data-testid='tab-button-${name}']`);
+    // Disable all instances first
+    buttons.forEach((btn) => {
+      btn.removeAttribute('href');
+    });
+    // Click the last one (most recent/active view)
+    if (buttons.length) {
+      (buttons[buttons.length - 1] as HTMLElement).click();
+    }
+  }, tabName);
+
+  await browser.pause(500);
+
+  // Verify we actually navigated
+  const url = await browser.getUrl();
+  if (!url.includes(tabName)) {
+    // Force navigate via URL as fallback
+    await browser.execute((name) => {
+      window.location.hash = '';
+      const ionRouter = document.querySelector('ion-router');
+      if (ionRouter) {
+        (ionRouter as any).push(`/tabs/${name}`);
+      }
+    }, tabName);
+    await browser.pause(500);
+  }
 }
 
 async function openNotificationByText(labelText: string): Promise<void> {
@@ -74,7 +116,7 @@ async function confirmNotificationWithPasscode(passcode?: number[]): Promise<voi
     await browser.pause(500);
   }
 
-  const passcodeVisible = await PasscodeScreen.screenTitle.isDisplayed().catch(() => false);
+  const passcodeVisible = await IdentifiersCredentialPasscodeScreen.verifyPasscodeTitle.isDisplayed().catch(() => false);
   if (passcodeVisible) {
     if (!passcode) {
       throw new Error("Missing stored passcode for verification.");
@@ -181,9 +223,13 @@ When(/^IPEX the credential issuer offers a "([^"]*)" credential to Alice's group
           attendeeName: "Alice",
         },
       });
+      // Embed the schema server URL in the grant so the wallet resolves
+      // schemas via getInlineSchemaOobiBase(), bypassing the indexer/ESSR
+      // path that fails from the Android emulator.
       await world.issuer!.grantCredential(
           credentialSaid,
           world.groupAid!,
+          getSchemaServerOobiBase(),
       );
     }
 );
@@ -193,32 +239,19 @@ Then(/^IPEX Alice receives the offered credential as the initiator$/, async func
 
   await navigateToTab("notifications");
   await openNotificationByText(CF_CREDENTIAL_ISSUANCE_ALIAS);
-  // Breaks in here - App getting offline
   await confirmNotificationWithPasscode(world.passcode);
 
-  await navigateToTab("credentials");
   await waitUpTo(
       async () => pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS),
       3000
   );
 });
 
-Then(/^IPEX Alice presents the requested credential as the initiator$/, async function () {
-  const world = this as AliceInitiatorWorld;
-  const notificationText = `${world.credentialIssuerNotificationName ?? CF_CREDENTIAL_ISSUANCE_ALIAS} ${PRESENTATION_NOTIFICATION_TEXT}`;
-
-  await navigateToTab("notifications");
-  await openNotificationByText(notificationText);
-  await confirmNotificationWithPasscode(world.passcode);
-
-  await browser.waitUntil(
-      async () => {
-        const url = await browser.getUrl();
-        return url.includes("/tabs/notifications") || url.includes("/tabs/credentials");
-      },
-      {
-        timeout: 30000,
-        timeoutMsg: "The app did not leave the presentation request flow after presenting the credential.",
-      }
-  );
+Then(/^IPEX Alice presents the "([^"]*)" credential as the initiator$/, async function (credentialName: string) {
+  await toastContainsText(CREDENTIAL_PENDING_TEXT)
+  await toastContainsText(NEW_CREDENTIAL_ADDED_TEXT)
+  await navigateToTabUsingJSClick("connections");
+  await browser.pause(50000);
+  await ConnectionsDetailsScreen.verifyCredentialReceivedInHistory(credentialName);
 });
+

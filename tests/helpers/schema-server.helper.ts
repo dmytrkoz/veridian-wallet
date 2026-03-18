@@ -77,6 +77,18 @@ export function getSchemaOobi(schemaSaid: string): string {
 }
 
 /**
+ * Returns the schema server's base OOBI URL (e.g. http://host.docker.internal:3001/oobi).
+ * Used as the oobiUrl value in grant messages so the wallet's
+ * getInlineSchemaOobiBase() can resolve schemas directly.
+ */
+export function getSchemaServerOobiBase(): string {
+  if (!schemaBaseUrl) {
+    throw new Error("Schema server not started. Call startSchemaServer() first.");
+  }
+  return `${schemaBaseUrl}/oobi`;
+}
+
+/**
  * Configures the Issuer's AID with an `indexer` end role and `locScheme`
  * pointing to the local schema server.
  *

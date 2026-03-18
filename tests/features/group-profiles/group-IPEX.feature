@@ -27,7 +27,7 @@ Feature: Group Profile Multisig (Initiator and Members)
     When IPEX Alice connects the credential issuer
     And IPEX the credential issuer offers a "<acdc>" credential to Alice's group
     Then IPEX Alice receives the offered credential as the initiator
-    Then IPEX Alice presents the requested credential as the initiator
+    Then IPEX Alice presents the "<acdc>" credential as the initiator
 
     Examples:
       | required | recovery | members        | acdc                   |

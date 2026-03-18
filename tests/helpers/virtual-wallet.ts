@@ -6,6 +6,7 @@
 
 import {
   Algos,
+  b,
   d,
   messagize,
   randomPasscode,
@@ -14,6 +15,8 @@ import {
   SignifyClient,
   Tier,
   Operation,
+  serializeACDCAttachment,
+  serializeIssExnAttachment,
 } from "signify-ts";
 
 export interface KeriaConfig {
@@ -57,9 +60,9 @@ export class VirtualWallet {
   private pendingOperations: Operation[] = [];
 
   constructor(
-    public alias: string,
-    protected config: KeriaConfig,
-    protected passcode: string = randomPasscode()
+      public alias: string,
+      protected config: KeriaConfig,
+      protected passcode: string = randomPasscode()
   ) {
     this.client = new SignifyClient(config.connectUrl, this.passcode, Tier.low, config.bootUrl);
     this.aidName = `${alias}_AID`;
@@ -121,8 +124,8 @@ export class VirtualWallet {
 
   async waitOperation(operation: any, timeoutMs = 30000) {
     return this.client.operations().wait(
-      operation,
-      { signal: AbortSignal.timeout(timeoutMs) }
+        operation,
+        { signal: AbortSignal.timeout(timeoutMs) }
     );
   }
 
@@ -171,18 +174,18 @@ export class VirtualWallet {
 
     const notifications = await this.waitForNotification("/multisig/icp", timeoutMs);
     const icpMsg = await this.client
-      .groups()
-      .getRequest(notifications[0].a.d)
-      .catch((error) => {
-        const status = error.message.split(" - ")[1];
-        if (/404/gi.test(status)) {
-          throw new Error(
-            `There's no exchange message for the given SAID ${notifications[0].a.i}`
-          );
-        } else {
-          throw error;
-        }
-      });
+        .groups()
+        .getRequest(notifications[0].a.d)
+        .catch((error) => {
+          const status = error.message.split(" - ")[1];
+          if (/404/gi.test(status)) {
+            throw new Error(
+                `There's no exchange message for the given SAID ${notifications[0].a.i}`
+            );
+          } else {
+            throw error;
+          }
+        });
 
     const exn = icpMsg[0].exn;
     const icpParams = exn.e.icp;
@@ -190,10 +193,10 @@ export class VirtualWallet {
     const rmids = exn.a.rmids || smids;
 
     const states = await Promise.all(
-      smids.map((id: string) => this.client.keyStates().get(id).then((s: any) => s[0]))
+        smids.map((id: string) => this.client.keyStates().get(id).then((s: any) => s[0]))
     );
     const rstates = await Promise.all(
-      rmids.map((id: string) => this.client.keyStates().get(id).then((s: any) => s[0]))
+        rmids.map((id: string) => this.client.keyStates().get(id).then((s: any) => s[0]))
     );
 
     const group = new Group(this.client, this.aidName, groupName, states);
@@ -231,8 +234,8 @@ export class VirtualWallet {
     const myPrefix = await this.getAid();
 
     const recipients = signingMembers
-      .map((m: any) => m.aid)
-      .filter((aid: string) => aid !== myPrefix);
+        .map((m: any) => m.aid)
+        .filter((aid: string) => aid !== myPrefix);
 
     console.log(`[${this.alias}] Found ${signingMembers.length} members. Starting authorization.`);
 
@@ -274,8 +277,8 @@ export class VirtualWallet {
     const signingMembers = membersResult.signing;
     const myPrefix = await this.getAid();
     const recipients = signingMembers
-      .map((m: any) => m.aid)
-      .filter((aid: string) => aid !== myPrefix);
+        .map((m: any) => m.aid)
+        .filter((aid: string) => aid !== myPrefix);
 
     const notifications = await this.waitForNotification("/multisig/rpy", 60000);
     for (const notification of notifications) {
@@ -301,9 +304,9 @@ export class RemoteInitiator extends VirtualWallet {
    * @returns groupId  - The prefix of the newly created multisig identifier
    */
   async createAndProposeGroup(
-    groupName: string,
-    joinerAids: string[],
-    options: CreateGroupOptions = { isith: 1, nsith: 1, toad: 0, wits: [] }
+      groupName: string,
+      joinerAids: string[],
+      options: CreateGroupOptions = { isith: 1, nsith: 1, toad: 0, wits: [] }
   ): Promise<{ groupId: string }> {
     if (!joinerAids.length) {
       console.warn(`[${this.alias}] No joiner AIDs provided. Creating group with only the initiator as member.`);
@@ -315,7 +318,7 @@ export class RemoteInitiator extends VirtualWallet {
 
     console.log(`[${this.alias}] Fetching key states for all members: ${allMemberIds.join(", ")}`);
     const memberStates = await Promise.all(
-      allMemberIds.map((id) => this.client.keyStates().get(id).then((s: any) => s[0]))
+        allMemberIds.map((id) => this.client.keyStates().get(id).then((s: any) => s[0]))
     );
 
     const group = new Group(this.client, this.aidName, groupName, memberStates);
@@ -367,15 +370,15 @@ export class Issuer extends VirtualWallet {
     console.log(`[${this.aidName}] Issuing credential to ${params.recipientId}`);
 
     const result = await this.client.credentials().issue(
-      this.aidName,
-      {
-        ri: params.registry,
-        s: params.schemaSaid,
-        a: {
-          i: params.recipientId,
-          ...params.claims
+        this.aidName,
+        {
+          ri: params.registry,
+          s: params.schemaSaid,
+          a: {
+            i: params.recipientId,
+            ...params.claims
+          }
         }
-      }
     );
 
     const op = await result.op;
@@ -386,26 +389,71 @@ export class Issuer extends VirtualWallet {
     return credentialSaid;
   }
 
-  async grantCredential(credentialSaid: string, recipientId: string) {
+  async grantCredential(credentialSaid: string, recipientId: string, oobiUrl?: string) {
     console.log(`[${this.aidName}] Granting credential ${credentialSaid} to ${recipientId}`);
 
     const acdc = await this.client.credentials().get(credentialSaid);
-    const [grant, gsigs, gend] = await this.client.ipex().grant({
-      senderName: this.aidName,
-      acdc: new Serder(acdc.sad),
-      iss: new Serder(acdc.iss),
-      anc: new Serder(acdc.anc),
-      ancAttachment: acdc.ancatc,
-      recipient: recipientId,
-      datetime: new Date().toISOString().replace("Z", "000+00:00"),
-    });
+    const acdcSerder = new Serder(acdc.sad);
+    const issSerder = new Serder(acdc.iss);
+    const ancSerder = new Serder(acdc.anc);
+    const datetime = new Date().toISOString().replace("Z", "000+00:00");
+
+    let grant: Serder;
+    let gsigs: string[];
+    let gend: string;
+
+    if (oobiUrl) {
+      // Build grant exchange directly so we can include oobiUrl in exn.a.
+      // The wallet's getInlineSchemaOobiBase() reads exn.a.oobiUrl and uses
+      // it to resolve the schema, bypassing the indexer/ESSR path entirely.
+      const hab = await this.client.identifiers().get(this.aidName);
+      const data: Record<string, string> = { m: "", oobiUrl };
+
+      let atc: string;
+      if (acdc.ancatc) {
+        atc = acdc.ancatc;
+      } else {
+        const keeper = (this.client as any).manager.get(hab);
+        const sigs = await keeper.sign(b(ancSerder.raw));
+        const sigers = sigs.map((sig: string) => new Siger({ qb64: sig }));
+        const ims = d(messagize(ancSerder, sigers));
+        atc = ims.substring(ancSerder.size);
+      }
+
+      const acdcAtc = d(serializeACDCAttachment(issSerder));
+      const issAtc = d(serializeIssExnAttachment(ancSerder));
+      const embeds = {
+        acdc: [acdcSerder, acdcAtc],
+        iss: [issSerder, issAtc],
+        anc: [ancSerder, atc],
+      };
+
+      [grant, gsigs, gend] = await this.client.exchanges().createExchangeMessage(
+          hab,
+          "/ipex/grant",
+          data,
+          embeds,
+          recipientId,
+          datetime,
+      );
+    } else {
+      [grant, gsigs, gend] = await this.client.ipex().grant({
+        senderName: this.aidName,
+        acdc: acdcSerder,
+        iss: issSerder,
+        anc: ancSerder,
+        ancAttachment: acdc.ancatc,
+        recipient: recipientId,
+        datetime,
+      });
+    }
 
     const grantOperation = await this.client.ipex().submitGrant(
-      this.aidName,
-      grant,
-      gsigs,
-      gend,
-      [recipientId]
+        this.aidName,
+        grant,
+        gsigs,
+        gend,
+        [recipientId]
     );
 
     await this.waitOperation(grantOperation);
@@ -422,11 +470,11 @@ export class Issuer extends VirtualWallet {
     });
 
     const admitOperation = await this.client.ipex().submitAdmit(
-      this.aidName,
-      admit,
-      sigs,
-      aend,
-      [recipientId]
+        this.aidName,
+        admit,
+        sigs,
+        aend,
+        [recipientId]
     );
 
     await this.waitOperation(admitOperation);
@@ -440,10 +488,10 @@ class Group {
   operation: any;
 
   constructor(
-    public client: SignifyClient,
-    public userAidName: string,
-    public groupAlias: string,
-    public memberStates: any[]
+      public client: SignifyClient,
+      public userAidName: string,
+      public groupAlias: string,
+      public memberStates: any[]
   ) { }
 
   async create(params: {
@@ -487,13 +535,13 @@ class Group {
     const smids = this.memberStates.map((s: any) => s.i);
 
     return this.client.exchanges().send(
-      this.userAidName,
-      this.groupAlias,
-      mhab,
-      "/multisig/icp",
-      { gid: serder.pre, smids, rmids: smids },
-      embeds,
-      recipients
+        this.userAidName,
+        this.groupAlias,
+        mhab,
+        "/multisig/icp",
+        { gid: serder.pre, smids, rmids: smids },
+        embeds,
+        recipients
     );
   }
 
@@ -533,10 +581,10 @@ export class Role {
     }
 
     const result = await this.user.client.identifiers().addEndRole(
-      this.alias,
-      role,
-      eid,
-      this.dt
+        this.alias,
+        role,
+        eid,
+        this.dt
     );
 
     const op = await result.op();
@@ -562,20 +610,20 @@ export class Role {
     const sigers = this.addResult.sigs.map((sig: string) => new Siger({ qb64: sig }));
 
     const roleims = d(
-      messagize(rpy, sigers, seal, undefined, undefined, false)
+        messagize(rpy, sigers, seal, undefined, undefined, false)
     );
     const atc = roleims.substring(rpy.size);
     const embeds = { rpy: [rpy, atc] };
 
     const aid = await this.user.client.identifiers().get(this.user.aidName);
     return this.user.client.exchanges().send(
-      this.user.aidName,
-      "multisig",
-      aid,
-      "/multisig/rpy",
-      { gid: ghab.prefix },
-      embeds,
-      recipients
+        this.user.aidName,
+        "multisig",
+        aid,
+        "/multisig/rpy",
+        { gid: ghab.prefix },
+        embeds,
+        recipients
     );
   }
 
@@ -584,10 +632,10 @@ export class Role {
     this.dt = notification.e.rpy.dt;
 
     const result = await this.user.client.identifiers().addEndRole(
-      this.alias,
-      notification.e.rpy.a.role,
-      notification.e.rpy.a.eid,
-      notification.e.rpy.dt
+        this.alias,
+        notification.e.rpy.a.role,
+        notification.e.rpy.a.eid,
+        notification.e.rpy.dt
     );
     const op = await result.op();
     this.addResult = result;
