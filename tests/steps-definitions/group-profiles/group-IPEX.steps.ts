@@ -9,6 +9,11 @@ import {
 } from "../../helpers/credential-server.helper.js";
 import { installShareCapture, pasteOobiAndConfirm, pageContainsText, waitUpTo } from "./group-profile.helpers.js";
 import { createIssuer } from "../../helpers/virtual-wallet.factory.js";
+import {
+  startSchemaServer,
+  getSchemaOobi,
+  setupIssuerSchemaEndpoint,
+} from "../../helpers/schema-server.helper.js";
 
 const PRESENTATION_NOTIFICATION_TEXT = "has requested a credential from you";
 
@@ -35,18 +40,18 @@ async function navigateToTab(tabName: string): Promise<void> {
 
 async function openNotificationByText(labelText: string): Promise<void> {
   await waitUpTo(
-    async () => {
-      const items = await $$("[data-testid^='notifications-tab-item-']");
-      for (const item of items) {
-        const label = await item.getText().catch(() => "");
-        if (label.includes(labelText)) {
-          await item.click();
-          return true;
+      async () => {
+        const items = await $$("[data-testid^='notifications-tab-item-']");
+        for (const item of items) {
+          const label = await item.getText().catch(() => "");
+          if (label.includes(labelText)) {
+            await item.click();
+            return true;
+          }
         }
-      }
-      return false;
-    },
-    3000,
+        return false;
+      },
+      3000,
   );
 }
 
@@ -85,11 +90,11 @@ type AliceInitiatorWorld = {
   credentialIssuerNotificationName?: string; // This may be not needed
   passcode?: number[];
   virtualMembers?: Record<
-    string,
-    {
-      instance: RemoteJoiner;
-      oobi: string;
-    }
+      string,
+      {
+        instance: RemoteJoiner;
+        oobi: string;
+      }
   >;
   aliceSharedOobi?: string;
   issuer?: Issuer;
@@ -99,6 +104,11 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
   const world = this as AliceInitiatorWorld;
   if (!world.issuer) {
     world.issuer = await createIssuer("Issuer");
+
+    // Start the local schema server and configure the Issuer's indexer endpoint.
+    // This replaces the cred-issuance container entirely.
+    await startSchemaServer();
+    await setupIssuerSchemaEndpoint(world.issuer);
   }
   const issuerOobi = await world.issuer.getOobi({ alias: CF_CREDENTIAL_ISSUANCE_ALIAS });
 
@@ -121,7 +131,7 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
   await groupShareButton.click();
 
   const groupOobi = (await browser.execute(
-    () => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi
+      () => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi
   )) as string | undefined;
 
   if (!groupOobi) {
@@ -140,7 +150,7 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
 
   // Wait for the issuer connection to appear on the Connections page
   await waitUpTo(
-    async () => await pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS)
+      async () => await pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS)
   );
 
   await world.issuer.resolveOobi(groupOobi, "MultisigGroup");
@@ -148,33 +158,34 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
   world.groupAid = groupOobi.split("/oobi/")[1].split("/")[0];
 
   await waitUpTo(
-    async () => {
-      const hasPending = await pageContainsText("Pending");
-      return !hasPending;
-    }
+      async () => {
+        const hasPending = await pageContainsText("Pending");
+        return !hasPending;
+      }
   );
 });
 
 When(/^IPEX the credential issuer offers a "([^"]*)" credential to Alice's group$/,
-  async function (credentialName: string) {
-    const world = this as AliceInitiatorWorld;
-    const registry = await world.issuer!.createRegistry("issuer-registry");
-    const acdcSchemaSaid = ACDC_SCHEMAS[credentialName];
-    const schemaOobi = `http://cred-issuance:3001/oobi/${acdcSchemaSaid}`;
-    await world.issuer!.resolveOobi(schemaOobi, credentialName);
-    const credentialSaid = await world.issuer!.issueCredential({
-      registry: registry.regk,
-      schemaSaid: acdcSchemaSaid,
-      recipientId: world.groupAid!,
-      claims: {
-        attendeeName: "Alice",
-      },
-    });
-    await world.issuer!.grantCredential(
-      credentialSaid,
-      world.groupAid!,
-    );
-  }
+    async function (credentialName: string) {
+      const world = this as AliceInitiatorWorld;
+      const registry = await world.issuer!.createRegistry("issuer-registry");
+      const acdcSchemaSaid = ACDC_SCHEMAS[credentialName];
+      // Resolve schema from the local server instead of cred-issuance container
+      const schemaOobi = getSchemaOobi(acdcSchemaSaid);
+      await world.issuer!.resolveOobi(schemaOobi, credentialName);
+      const credentialSaid = await world.issuer!.issueCredential({
+        registry: registry.regk,
+        schemaSaid: acdcSchemaSaid,
+        recipientId: world.groupAid!,
+        claims: {
+          attendeeName: "Alice",
+        },
+      });
+      await world.issuer!.grantCredential(
+          credentialSaid,
+          world.groupAid!,
+      );
+    }
 );
 
 Then(/^IPEX Alice receives the offered credential as the initiator$/, async function () {
@@ -187,8 +198,8 @@ Then(/^IPEX Alice receives the offered credential as the initiator$/, async func
 
   await navigateToTab("credentials");
   await waitUpTo(
-    async () => pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS),
-    3000
+      async () => pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS),
+      3000
   );
 });
 
@@ -201,13 +212,13 @@ Then(/^IPEX Alice presents the requested credential as the initiator$/, async fu
   await confirmNotificationWithPasscode(world.passcode);
 
   await browser.waitUntil(
-    async () => {
-      const url = await browser.getUrl();
-      return url.includes("/tabs/notifications") || url.includes("/tabs/credentials");
-    },
-    {
-      timeout: 30000,
-      timeoutMsg: "The app did not leave the presentation request flow after presenting the credential.",
-    }
+      async () => {
+        const url = await browser.getUrl();
+        return url.includes("/tabs/notifications") || url.includes("/tabs/credentials");
+      },
+      {
+        timeout: 30000,
+        timeoutMsg: "The app did not leave the presentation request flow after presenting the credential.",
+      }
   );
 });
