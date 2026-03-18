@@ -30,8 +30,8 @@ export async function startSchemaServer(): Promise<string> {
   if (schemaBaseUrl) return schemaBaseUrl;
 
   const schemasDir = path.resolve(
-    process.cwd(),
-    "services/credential-server/src/schemas"
+      process.cwd(),
+      "services/credential-server/src/schemas"
   );
 
   return new Promise((resolve, reject) => {
@@ -55,7 +55,7 @@ export async function startSchemaServer(): Promise<string> {
     });
 
     schemaServer.listen(SCHEMA_SERVER_PORT, "0.0.0.0", () => {
-      const dockerHostIp = process.env.DOCKER_HOST_IP || "172.17.0.1";
+      const dockerHostIp = process.env.DOCKER_HOST_IP || "host.docker.internal";
       schemaBaseUrl = `http://${dockerHostIp}:${SCHEMA_SERVER_PORT}`;
       console.log(`[SchemaServer] Started at ${schemaBaseUrl}`);
       resolve(schemaBaseUrl);
@@ -94,8 +94,8 @@ export async function setupIssuerSchemaEndpoint(issuer: Issuer): Promise<void> {
   // Add indexer end role pointing to the Issuer's own AID prefix
   try {
     const endResult = await issuer.client
-      .identifiers()
-      .addEndRole(issuer.aidName, "indexer", prefix);
+        .identifiers()
+        .addEndRole(issuer.aidName, "indexer", prefix);
     await issuer.waitOperation(await endResult.op());
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -104,15 +104,15 @@ export async function setupIssuerSchemaEndpoint(issuer: Issuer): Promise<void> {
 
   // Set locScheme to point to the local schema server
   const locRes = await issuer.client
-    .identifiers()
-    .addLocScheme(issuer.aidName, {
-      url: schemaBaseUrl,
-      scheme: "http",
-    });
+      .identifiers()
+      .addLocScheme(issuer.aidName, {
+        url: schemaBaseUrl,
+        scheme: "http",
+      });
   await issuer.waitOperation(await locRes.op());
 
   console.log(
-    `[${issuer.aidName}] Configured as schema endpoint at ${schemaBaseUrl}`
+      `[${issuer.aidName}] Configured as schema endpoint at ${schemaBaseUrl}`
   );
 }
 
