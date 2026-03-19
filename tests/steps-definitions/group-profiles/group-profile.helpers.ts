@@ -1,4 +1,9 @@
 import { browser } from "@wdio/globals";
+import
+  IdentifiersCredentialPasscodeScreen
+ from "../../screen-objects/identifiers/identifiers-credential-passcode.screen.js";
+import PasscodeScreen from "../../screen-objects/onboarding/passcode.screen.js";
+import {navigateToTab} from "../../helpers/tab.helper";
 
 export async function pageContainsText(msg: string): Promise<boolean> {
   return (await browser.execute((m: string) => {
@@ -230,4 +235,60 @@ export async function installShareCapture() {
   `;
 
   await browser.execute(shareCaptureScript);
+}
+
+export async function openAddConnectionFlow(): Promise<void> {
+  await navigateToTab("connections");
+
+  const addConnectionButton = $("[data-testid='primary-button-connections-tab']");
+  await addConnectionButton.waitForDisplayed();
+  await addConnectionButton.click();
+
+  const shareProfileModal = $("[data-testid='share-profile']");
+  await shareProfileModal.waitForDisplayed();
+}
+
+export async function openNotificationByText(labelText: string): Promise<void> {
+  await waitUpTo(
+      async () => {
+        const items = await $$("[data-testid^='notifications-tab-item-']");
+        for (const item of items) {
+          const label = await item.getText().catch(() => "");
+          if (label.includes(labelText)) {
+            await item.click();
+            return true;
+          }
+        }
+        return false;
+      },
+      3000,
+  );
+}
+
+export async function confirmNotificationWithPasscode(passcode?: number[]): Promise<void> {
+  const primaryButton = $("[data-testid='primary-button-notification-details']");
+  await primaryButton.waitForDisplayed({ timeout: 20000 });
+  await primaryButton.click();
+  await browser.pause(500);
+
+  const chooseCredentialVisible = await $("[data-testid='choose-credential-segment']").isDisplayed().catch(() => false);
+  if (chooseCredentialVisible) {
+    const credentialChoices = $$("[data-testid^='cred-select-']");
+    if (!credentialChoices.length) {
+      throw new Error("No credential options were available to present.");
+    }
+
+    await credentialChoices[0].click();
+    await browser.pause(300);
+    await primaryButton.click();
+    await browser.pause(500);
+  }
+
+  const passcodeVisible = await IdentifiersCredentialPasscodeScreen.verifyPasscodeTitle.isDisplayed().catch(() => false);
+  if (passcodeVisible) {
+    if (!passcode) {
+      throw new Error("Missing stored passcode for verification.");
+    }
+    await PasscodeScreen.enterPasscode(passcode);
+  }
 }

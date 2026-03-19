@@ -3,7 +3,6 @@ import type { DataTable } from "@cucumber/cucumber";
 import { expect } from "expect-webdriverio";
 import { browser, driver } from "@wdio/globals";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
-import { RemoteJoiner } from "../../helpers/virtual-wallet.js";
 import { createVirtualWallet } from "../../helpers/virtual-wallet.factory.js";
 import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
 import {
@@ -13,21 +12,10 @@ import {
   waitUpTo,
   installShareCapture,
 } from "./group-profile.helpers.js";
+import { AliceInitiatorWorld } from "./group-profile.types.js";
 
 const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
 
-type AliceInitiatorWorld = {
-  aliceInitiatorGroupName?: string;
-  aliceInitiatorGroupId?: string | null;
-  virtualMembers?: Record<
-    string,
-    {
-      instance: RemoteJoiner;
-      oobi: string;
-    }
-  >;
-  aliceSharedOobi?: string;
-};
 
 Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^"]+)"$/,
   async function (requiredStr: string, recoveryStr: string, baseGroupName: string) {

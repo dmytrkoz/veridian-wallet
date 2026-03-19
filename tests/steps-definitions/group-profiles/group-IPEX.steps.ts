@@ -1,10 +1,5 @@
 import { When, Then } from "@wdio/cucumber-framework";
 import { browser, driver } from "@wdio/globals";
-import PasscodeScreen from "../../screen-objects/onboarding/passcode.screen.js";
-import
-  IdentifiersCredentialPasscodeScreen
- from "../../screen-objects/identifiers/identifiers-credential-passcode.screen.js";
-import { Issuer, RemoteJoiner } from "../../helpers/virtual-wallet.js";
 import {
   CF_CREDENTIAL_ISSUANCE_ALIAS,
   ACDC_SCHEMAS,
@@ -14,7 +9,7 @@ import {
   pasteOobiAndConfirm,
   pageContainsText,
   waitUpTo,
-  toastContainsText
+  toastContainsText, openAddConnectionFlow, openNotificationByText, confirmNotificationWithPasscode
 } from "./group-profile.helpers.js";
 import { createIssuer } from "../../helpers/virtual-wallet.factory.js";
 import {
@@ -25,122 +20,12 @@ import {
 } from "../../helpers/schema-server.helper.js";
 import ConnectionsScreen from "../../screen-objects/connections/connections.screen.js";
 import ConnectionsDetailsScreen from "../../screen-objects/connections/connections-details.screen.js";
+import { AliceInitiatorWorld } from "./group-profile.types.js";
+import {navigateToTab, navigateToTabUsingJsClick} from "../../helpers/tab.helper";
 
 const CREDENTIAL_PENDING_TEXT = "Credential request pending";
 const NEW_CREDENTIAL_ADDED_TEXT = "New credential added";
 
-async function openAddConnectionFlow(): Promise<void> {
-  await navigateToTab("connections");
-
-  const addConnectionButton = $("[data-testid='primary-button-connections-tab']");
-  await addConnectionButton.waitForDisplayed();
-  await addConnectionButton.click();
-
-  const shareProfileModal = $("[data-testid='share-profile']");
-  await shareProfileModal.waitForDisplayed();
-}
-
-/**
- * Navigate by tapping a tab bar button.
- * This is more reliable than browser.url() in Appium/Capacitor webview contexts.
- */
-async function navigateToTab(tabName: string): Promise<void> {
-  const tab = $(`[data-testid='tab-button-${tabName}']`);
-  await tab.waitForDisplayed();
-  await tab.click();
-}
-
-async function navigateToTabUsingJSClick(tabName: string): Promise<void> {
-  await browser.execute((name) => {
-    const buttons = document.querySelectorAll(`[data-testid='tab-button-${name}']`);
-    // Disable all instances first
-    buttons.forEach((btn) => {
-      btn.removeAttribute('href');
-    });
-    // Click the last one (most recent/active view)
-    if (buttons.length) {
-      (buttons[buttons.length - 1] as HTMLElement).click();
-    }
-  }, tabName);
-
-  await browser.pause(500);
-
-  // Verify we actually navigated
-  const url = await browser.getUrl();
-  if (!url.includes(tabName)) {
-    // Force navigate via URL as fallback
-    await browser.execute((name) => {
-      window.location.hash = '';
-      const ionRouter = document.querySelector('ion-router');
-      if (ionRouter) {
-        (ionRouter as any).push(`/tabs/${name}`);
-      }
-    }, tabName);
-    await browser.pause(500);
-  }
-}
-
-async function openNotificationByText(labelText: string): Promise<void> {
-  await waitUpTo(
-      async () => {
-        const items = await $$("[data-testid^='notifications-tab-item-']");
-        for (const item of items) {
-          const label = await item.getText().catch(() => "");
-          if (label.includes(labelText)) {
-            await item.click();
-            return true;
-          }
-        }
-        return false;
-      },
-      3000,
-  );
-}
-
-async function confirmNotificationWithPasscode(passcode?: number[]): Promise<void> {
-  const primaryButton = $("[data-testid='primary-button-notification-details']");
-  await primaryButton.waitForDisplayed({ timeout: 20000 });
-  await primaryButton.click();
-  await browser.pause(500);
-
-  const chooseCredentialVisible = await $("[data-testid='choose-credential-segment']").isDisplayed().catch(() => false);
-  if (chooseCredentialVisible) {
-    const credentialChoices = $$("[data-testid^='cred-select-']");
-    if (!credentialChoices.length) {
-      throw new Error("No credential options were available to present.");
-    }
-
-    await credentialChoices[0].click();
-    await browser.pause(300);
-    await primaryButton.click();
-    await browser.pause(500);
-  }
-
-  const passcodeVisible = await IdentifiersCredentialPasscodeScreen.verifyPasscodeTitle.isDisplayed().catch(() => false);
-  if (passcodeVisible) {
-    if (!passcode) {
-      throw new Error("Missing stored passcode for verification.");
-    }
-    await PasscodeScreen.enterPasscode(passcode);
-  }
-}
-
-type AliceInitiatorWorld = {
-  aliceInitiatorGroupName?: string;
-  aliceInitiatorGroupId?: string | null;
-  groupAid?: string;
-  credentialIssuerNotificationName?: string; // This may be not needed
-  passcode?: number[];
-  virtualMembers?: Record<
-      string,
-      {
-        instance: RemoteJoiner;
-        oobi: string;
-      }
-  >;
-  aliceSharedOobi?: string;
-  issuer?: Issuer;
-};
 
 When(/^IPEX Alice connects the credential issuer$/, async function () {
   const world = this as AliceInitiatorWorld;
@@ -250,8 +135,9 @@ Then(/^IPEX Alice receives the offered credential as the initiator$/, async func
 Then(/^IPEX Alice presents the "([^"]*)" credential as the initiator$/, async function (credentialName: string) {
   await toastContainsText(CREDENTIAL_PENDING_TEXT)
   await toastContainsText(NEW_CREDENTIAL_ADDED_TEXT)
-  await navigateToTabUsingJSClick("connections");
-  await browser.pause(50000);
+  await navigateToTabUsingJsClick("connections");
+  await ConnectionsScreen.checkListConnection(CF_CREDENTIAL_ISSUANCE_ALIAS)
+  await ConnectionsScreen.connectionTitle.click();
   await ConnectionsDetailsScreen.verifyCredentialReceivedInHistory(credentialName);
 });
 

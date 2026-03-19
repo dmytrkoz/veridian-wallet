@@ -32,6 +32,6 @@ Feature: Group Profile Multisig (Initiator and Members)
     Examples:
       | required | recovery | members        | acdc                   |
       | 1        | 2        | Bob            | Rare EVO 2024 Attendee |
-    #  | 2        | 2        | Bob            |
-    #  | 2        | 3        | Bob,Charlie    |
-    #  | 3        | 3        | Bob,Charlie    |
+      | 2        | 2        | Bob            | Rare EVO 2024 Attendee |
+      | 2        | 3        | Bob,Charlie    | Rare EVO 2024 Attendee |
+      | 3        | 3        | Bob,Charlie    | Rare EVO 2024 Attendee |

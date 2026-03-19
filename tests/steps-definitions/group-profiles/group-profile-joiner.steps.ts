@@ -2,7 +2,7 @@ import { Given, When, Then } from "@wdio/cucumber-framework";
 import type { DataTable } from "@cucumber/cucumber";
 import { browser, driver } from "@wdio/globals";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
-import { RemoteInitiator, RemoteJoiner } from "../../helpers/virtual-wallet.js";
+import { BobJoinerWorld} from "./group-profile.types.js";
 import { createRemoteInitiator, createVirtualWallet } from "../../helpers/virtual-wallet.factory.js";
 import {
   getKeriaUrlsForTestRunner,
@@ -25,24 +25,7 @@ import {
 const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
 const GENERIC_CONNECTION_ERROR_MSG = "Something went wrong. Please try again.";
 
-// ---------------------------------------------------------------------------
-// World context shared across steps in one scenario
-// ---------------------------------------------------------------------------
 
-type BobJoinerWorld = {
-  bobGroupName?: string;
-  /** Alice's OOBI with pendingGroupId, ready for Bob to paste in the Join-Group scan screen */
-  aliceOobiForJoin?: string;
-  /** Bob's raw OOBI captured from the app's Share tab */
-  bobSharedOobi?: string;
-  remoteInitiator?: RemoteInitiator;
-  extraVirtualMembers?: Record<string, RemoteJoiner>;
-  /** KERI prefix of the created multisig group */
-  groupId?: string;
-  /** Alice's personal AID — used as pendingGroupId in extra-member OOBIs so the
-   *  app can match them to the correct pending group invitation */
-  aliceAid?: string;
-};
 
 // ---------------------------------------------------------------------------
 // Step 1 (BACKEND) - Alice creates a pending group so Bob can join

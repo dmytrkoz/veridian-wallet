@@ -1,6 +1,7 @@
 import {waitUpTo} from "../../steps-definitions/group-profiles/group-profile.helpers";
+import {ConnectionsScreen} from "./connections.screen.js";
 
-export class ConnectionsDetailsScreen {
+export class ConnectionsDetailsScreen extends ConnectionsScreen{
 
 
     async verifyCredentialReceivedInHistory(credentialName: string): Promise<void> {
