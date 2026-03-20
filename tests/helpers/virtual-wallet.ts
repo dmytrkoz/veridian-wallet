@@ -10,6 +10,7 @@ import {
   d,
   messagize,
   randomPasscode,
+  Saider,
   Serder,
   Siger,
   SignifyClient,
@@ -288,6 +289,106 @@ export class VirtualWallet {
       await bankGroupB_Role.send(recipients);
     }
   }
+
+  /**
+   * Joins a multisig IPEX admit initiated by another group member.
+   *
+   * Prerequisites: the grant must already exist in this agent's exchange DB
+   * (call Issuer.redeliverGrant first) and issuer + schema OOBIs must be
+   * resolved.
+   *
+   * Flow:
+   * 1. Wait for Alice's /multisig/exn notification wrapping /ipex/admit
+   *    to extract the datetime and grant SAID.
+   * 2. Create the admit with ipex().admit() using the same datetime so
+   *    all members produce an admit with the same SAID.
+   * 3. Call submitAdmit — KERIA validates the grant exists in this
+   *    agent's exchange DB (ipexing.py:175).
+   * 4. Send /multisig/exn to notify other members.
+   */
+  async joinMultisigAdmit(groupName: string, timeoutMs = 60000): Promise<void> {
+    // 1. Wait for Alice's /multisig/exn notification wrapping /ipex/admit.
+    console.log(`[${this.alias}] Waiting for /multisig/exn notification...`);
+    const notifications = await this.waitForNotification("/multisig/exn", timeoutMs);
+
+    let admitNotification: any;
+    let admitExnData: any;
+    for (const notification of notifications) {
+      const requests = await this.client.groups().getRequest(notification.a.d);
+      if (requests.length > 0 && requests[0].exn?.e?.exn?.r === "/ipex/admit") {
+        admitNotification = notification;
+        admitExnData = requests[0].exn.e.exn;
+        break;
+      }
+    }
+
+    if (!admitNotification || !admitExnData) {
+      throw new Error(`[${this.alias}] No /ipex/admit found in /multisig/exn notifications`);
+    }
+
+    const grantSaid = admitExnData.p;          // parent = the grant
+    const admitDatetime = admitExnData.dt;     // datetime to match
+
+    // Get issuer prefix from the grant exchange which is now in this agent's
+    // DB (via Issuer.redeliverGrant).  This is more reliable than parsing the
+    // nested admit embed where field layout may vary.
+    const grantExn = await this.client.exchanges().get(grantSaid);
+    const issuerPrefix = grantExn.exn.i;       // sender of the grant = issuer
+    console.log(`[${this.alias}] Found admit — grant=${grantSaid}, issuer=${issuerPrefix}, dt=${admitDatetime}`);
+
+    // 2. Create the admit using ipex().admit() with the same datetime.
+    const [admit, sigs, end] = await this.client.ipex().admit({
+      senderName: groupName,
+      message: "",
+      grantSaid: grantSaid,
+      recipient: issuerPrefix,
+      datetime: admitDatetime,
+    });
+
+    // 3. Submit the admit — KERIA validates the grant in this agent's DB.
+    const gHab = await this.client.identifiers().get(groupName);
+    const mHab = await this.client.identifiers().get(this.aidName);
+    const members = await this.client.identifiers().members(groupName);
+    const myPrefix = await this.getAid();
+    const recp = members.signing
+        .map((m: any) => m.aid)
+        .filter((aid: string) => aid !== myPrefix);
+
+    const op = await this.client
+        .ipex()
+        .submitAdmit(groupName, admit, sigs, end, [issuerPrefix]);
+
+    // 4. Send /multisig/exn to other members.
+    const mstate = gHab["state"];
+    const seal = [
+      "SealEvent",
+      { i: gHab["prefix"], s: mstate["ee"]["s"], d: mstate["ee"]["d"] },
+    ];
+    const sigers = sigs.map((sig: string) => new Siger({ qb64: sig }));
+    const ims = d(messagize(admit, sigers, seal));
+    let atc = ims.substring(admit.size);
+    atc += end;
+    const gembeds = {
+      exn: [admit, atc],
+    };
+
+    await this.client
+        .exchanges()
+        .send(
+            this.aidName,
+            "multisig",
+            mHab,
+            "/multisig/exn",
+            { gid: gHab["prefix"] },
+            gembeds,
+            recp
+        );
+
+    this.pushOperation(op);
+    await this.client.notifications().mark(admitNotification.i);
+
+    console.log(`[${this.alias}] Submitted multisig admit for group ${groupName}`);
+  }
 }
 
 export class RemoteJoiner extends VirtualWallet { }
@@ -342,6 +443,8 @@ export class RemoteInitiator extends VirtualWallet {
 }
 
 export class Issuer extends VirtualWallet {
+  private lastGrant?: { serder: Serder; sigs: string[]; end: string };
+
   async createRegistry(registryAlias: string) {
     console.log(`[${this.aidName}] Creating registry: ${registryAlias}`);
 
@@ -458,6 +561,36 @@ export class Issuer extends VirtualWallet {
 
     await this.waitOperation(grantOperation);
     console.log(`[${this.aidName}] Grant completed for ${recipientId}`);
+
+    // Store grant artifacts so we can re-deliver to additional recipients later
+    this.lastGrant = { serder: grant, sigs: gsigs, end: gend };
+  }
+
+  /**
+   * Re-delivers the last grant to additional recipients so their KERIA agents
+   * have the grant exchange in their own habery (hby.db.exns).
+   *
+   * This is needed because each virtual wallet boots a separate KERIA agent
+   * with its own isolated database. The original grant is only delivered to
+   * the group AID endpoint (processed by Alice's app agent). Without
+   * re-delivery, Bob's agent can't pass KERIA's grant validation in
+   * sendMultisigExn (ipexing.py:175).
+   */
+  async redeliverGrant(recipientAids: string[]): Promise<void> {
+    if (!this.lastGrant) {
+      throw new Error(`[${this.aidName}] No grant to redeliver — call grantCredential first`);
+    }
+    for (const aid of recipientAids) {
+      console.log(`[${this.aidName}] Re-delivering grant to ${aid}`);
+      const op = await this.client.ipex().submitGrant(
+          this.aidName,
+          this.lastGrant.serder,
+          this.lastGrant.sigs,
+          this.lastGrant.end,
+          [aid]
+      );
+      await this.waitOperation(op);
+    }
   }
 
   async admitCredential(grantNotification: any, recipientId: string) {

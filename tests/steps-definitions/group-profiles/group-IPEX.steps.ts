@@ -97,6 +97,7 @@ When(/^IPEX the credential issuer offers a "([^"]*)" credential to Alice's group
       const world = this as AliceInitiatorWorld;
       const registry = await world.issuer!.createRegistry("issuer-registry");
       const acdcSchemaSaid = ACDC_SCHEMAS[credentialName];
+      world.acdcSchemaSaid = acdcSchemaSaid;
       // Resolve schema from the local server instead of cred-issuance container
       const schemaOobi = getSchemaOobi(acdcSchemaSaid);
       await world.issuer!.resolveOobi(schemaOobi, credentialName);
@@ -130,6 +131,45 @@ Then(/^IPEX Alice receives the offered credential as the initiator$/, async func
       async () => pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS),
       3000
   );
+});
+
+When(/^all members join the multisig admit$/, async function () {
+  const world = this as AliceInitiatorWorld;
+  if (!world.requiredSigners || world.requiredSigners <= 1) {
+    console.log("Single signer threshold — skipping multisig admit join");
+    return;
+  }
+
+  if (!world.virtualMembers || !world.aliceInitiatorGroupName) {
+    throw new Error("No virtual members or group name found");
+  }
+
+  // Resolve the issuer's OOBI and schema OOBI for all virtual members so their
+  // KERIA agents can validate the credential grant.
+  const issuerOobi = await world.issuer!.getOobi({ alias: CF_CREDENTIAL_ISSUANCE_ALIAS });
+  const schemaOobi = getSchemaOobi(world.acdcSchemaSaid!);
+  for (const [, member] of Object.entries(world.virtualMembers)) {
+    await member.instance.resolveOobi(issuerOobi, CF_CREDENTIAL_ISSUANCE_ALIAS);
+    await member.instance.resolveOobi(schemaOobi, "schema");
+  }
+
+  const memberAids: string[] = [];
+  for (const [, member] of Object.entries(world.virtualMembers)) {
+    const memberOobi = await member.instance.getOobi({ alias: member.instance.aidName });
+    await world.issuer!.resolveOobi(memberOobi, member.instance.aidName);
+    memberAids.push(await member.instance.getAid());
+  }
+  await world.issuer!.redeliverGrant(memberAids);
+
+  // All virtual members submit their co-signatures
+  for (const [, member] of Object.entries(world.virtualMembers)) {
+    await member.instance.joinMultisigAdmit(world.aliceInitiatorGroupName);
+  }
+
+  // Wait for all pending operations (admit) to complete on KERIA
+  for (const [, member] of Object.entries(world.virtualMembers)) {
+    await member.instance.waitPendingOperations();
+  }
 });
 
 Then(/^IPEX Alice presents the "([^"]*)" credential as the initiator$/, async function (credentialName: string) {

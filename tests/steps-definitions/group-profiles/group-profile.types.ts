@@ -6,6 +6,8 @@ export type AliceInitiatorWorld = {
     groupAid?: string;
     credentialIssuerNotificationName?: string;
     passcode?: number[];
+    requiredSigners?: number;
+    acdcSchemaSaid?: string;
     virtualMembers?: Record<
         string,
         {
