@@ -98,14 +98,14 @@ When(/^user taps "I accept" button$/, async function () {
 
 Then(/^user can see "Terms" tab$/, async function () {
   await TermsAndPrivacyScreen.loads();
-  const buttons = $$("[data-testid='term-segment-button']");
+  const buttons =await $$("[data-testid='term-segment-button']");
   expect(buttons.length).toBeGreaterThan(0);
   await expect(buttons[0]).toBeDisplayed();
 });
 
 Then(/^user can see "Privacy" tab$/, async function () {
   await TermsAndPrivacyScreen.loads();
-  const buttons = $$("[data-testid='term-segment-button']");
+  const buttons =await  $$("[data-testid='term-segment-button']");
   expect(buttons.length).toBeGreaterThan(1);
   await expect(buttons[1]).toBeDisplayed();
 });
