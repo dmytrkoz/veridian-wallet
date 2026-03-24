@@ -1,4 +1,4 @@
-import {RemoteJoiner, Issuer, RemoteInitiator} from "../../helpers/virtual-wallet.js";
+import {RemoteJoiner, Issuer, RemoteInitiator, Verifier} from "../../helpers/virtual-wallet.js";
 
 export type AliceInitiatorWorld = {
     aliceInitiatorGroupName?: string;
@@ -16,7 +16,9 @@ export type AliceInitiatorWorld = {
         }
     >;
     aliceSharedOobi?: string;
+    groupOobi?: string;
     issuer?: Issuer;
+    verifier?: Verifier;
 };
 
 export type BobJoinerWorld = {

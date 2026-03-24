@@ -11,7 +11,7 @@ import {
   waitUpTo,
   toastContainsText, openAddConnectionFlow, openNotificationByText, confirmNotificationWithPasscode
 } from "./group-profile.helpers.js";
-import { createIssuer } from "../../helpers/virtual-wallet.factory.js";
+import { createIssuer, createVerifier } from "../../helpers/virtual-wallet.factory.js";
 import {
   startSchemaServer,
   getSchemaOobi,
@@ -82,6 +82,7 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
 
   await world.issuer.resolveOobi(groupOobi, "MultisigGroup");
   console.log(`Resolved group OOBI for issuer: ${groupOobi}`);
+  world.groupOobi = groupOobi;
   world.groupAid = groupOobi.split("/oobi/")[1].split("/")[0];
 
   await waitUpTo(
@@ -179,5 +180,134 @@ Then(/^IPEX Alice presents the "([^"]*)" credential as the initiator$/, async fu
   await ConnectionsScreen.checkListConnection(CF_CREDENTIAL_ISSUANCE_ALIAS)
   await ConnectionsScreen.connectionTitle.click();
   await ConnectionsDetailsScreen.verifyCredentialReceivedInHistory(credentialName);
+});
+
+// ---------------------------------------------------------------------------
+// Verifier presentation flow
+// ---------------------------------------------------------------------------
+
+const CF_VERIFIER_ALIAS = "Verifier";
+
+When(/^the verifier connects to Alice's group$/, async function () {
+  const world = this as AliceInitiatorWorld;
+
+  if (!world.verifier) {
+    world.verifier = await createVerifier(CF_VERIFIER_ALIAS);
+    await startSchemaServer();
+  }
+
+  // Resolve the group's OOBI so the verifier can address the holder
+  const groupOobi = world.groupOobi;
+  if (!groupOobi) {
+    throw new Error("Group OOBI is not available — ensure 'IPEX Alice connects the credential issuer' ran first.");
+  }
+  await world.verifier.resolveOobi(groupOobi, "MultisigGroup");
+
+  // Resolve schema OOBI for the verifier
+  const schemaOobi = getSchemaOobi(world.acdcSchemaSaid!);
+  await world.verifier.resolveOobi(schemaOobi, "schema");
+
+  // Resolve the verifier's OOBI for all virtual members
+  const verifierOobi = await world.verifier.getOobi({ alias: CF_VERIFIER_ALIAS });
+  for (const [, member] of Object.entries(world.virtualMembers!)) {
+    await member.instance.resolveOobi(verifierOobi, CF_VERIFIER_ALIAS);
+  }
+
+  console.log(`Verifier connected to Alice's group (API only)`);
+});
+
+When(/^the verifier requests a presentation of "([^"]*)" from Alice's group$/, async function (credentialName: string) {
+  const world = this as AliceInitiatorWorld;
+
+  if (!world.verifier) {
+    throw new Error("Verifier is not initialized — run 'the verifier connects to Alice's group' first.");
+  }
+
+  const schemaSaid = ACDC_SCHEMAS[credentialName];
+
+  await world.verifier.requestPresentation({
+    holderAid: world.groupAid!,
+    schemaSaid,
+  });
+
+  console.log(`Verifier sent presentation request for "${credentialName}" to group ${world.groupAid}`);
+});
+
+Then(/^IPEX Alice approves the presentation request$/, async function () {
+  const world = this as AliceInitiatorWorld;
+
+  if (!world.virtualMembers || !world.aliceInitiatorGroupName) {
+    throw new Error("No virtual members or group name found");
+  }
+
+  // Resolve each virtual member's individual OOBI on the verifier so it can
+  // route the apply to their isolated KERIA agents.
+  const memberEntries = Object.entries(world.virtualMembers);
+  for (const [, member] of memberEntries) {
+    const memberOobi = await member.instance.getOobi({ alias: member.instance.aidName });
+    await world.verifier!.resolveOobi(memberOobi, member.instance.aidName);
+  }
+
+  // Re-deliver the /ipex/apply to the first virtual member
+  const firstMember = memberEntries[0][1].instance;
+  const firstMemberAid = await firstMember.getAid();
+  await world.verifier!.redeliverApply([firstMemberAid]);
+
+  // First virtual member initiates the multisig grant via API.
+  // This sends /multisig/exn to Alice's wallet, which auto-joins the grant
+  // in the background (see processMultiSigExnNotification → joinMultisigGrant).
+  const applySaid = world.verifier!.getApplySaid();
+  await firstMember.initiateMultisigGrant(
+      world.aliceInitiatorGroupName,
+      world.acdcSchemaSaid!,
+      applySaid,
+  );
+
+  console.log(`First member initiated the presentation grant via API`);
+});
+
+When(/^all members join the multisig grant$/, async function () {
+  const world = this as AliceInitiatorWorld;
+
+  if (!world.virtualMembers || !world.aliceInitiatorGroupName) {
+    throw new Error("No virtual members or group name found");
+  }
+
+  const memberEntries = Object.entries(world.virtualMembers);
+
+  // Remaining virtual members (all except the first who already initiated) join
+  if (memberEntries.length > 1) {
+    const remainingMembers = memberEntries.slice(1);
+
+    // Re-deliver the /ipex/apply to remaining members
+    const remainingAids: string[] = [];
+    for (const [, member] of remainingMembers) {
+      remainingAids.push(await member.instance.getAid());
+    }
+    await world.verifier!.redeliverApply(remainingAids);
+
+    // Each remaining member co-signs the grant
+    for (const [, member] of remainingMembers) {
+      await member.instance.joinMultisigGrant(world.aliceInitiatorGroupName);
+    }
+  }
+
+  // Wait for all pending operations (grant) to complete on KERIA.
+  // Use a longer timeout (120s) because Alice's wallet app needs time to
+  // poll for the /multisig/exn notification and auto-join the grant.
+  for (const [, member] of Object.entries(world.virtualMembers)) {
+    await member.instance.waitPendingOperations(undefined, 120000);
+  }
+});
+
+Then(/^the verifier receives the presented credential$/, async function () {
+  const world = this as AliceInitiatorWorld;
+
+  if (!world.verifier) {
+    throw new Error("Verifier is not initialized.");
+  }
+
+  const credentialSaid = await world.verifier.waitForPresentationAndAdmit(60000);
+  console.log(`Verifier successfully received and admitted credential: ${credentialSaid}`);
 });
 

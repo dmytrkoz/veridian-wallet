@@ -161,12 +161,12 @@ export class VirtualWallet {
     return matches;
   }
 
-  public async waitPendingOperations(type?: string) {
+  public async waitPendingOperations(type?: string, timeoutMs = 30000) {
     console.log(`[${this.alias}] Waiting for pending operations...`);
     const ops = this.pullByType(type);
 
     for (const op of ops) {
-      await this.waitOperation(op);
+      await this.waitOperation(op, timeoutMs);
     }
   }
 
@@ -389,6 +389,225 @@ export class VirtualWallet {
 
     console.log(`[${this.alias}] Submitted multisig admit for group ${groupName}`);
   }
+
+  /**
+   * Joins a multisig IPEX grant (presentation) initiated by another group member.
+   *
+   * Prerequisites: the /ipex/apply must already exist in this agent's exchange DB
+   * (call Verifier.redeliverApply first) and verifier + schema OOBIs must be
+   * resolved. The credential must also be available to this agent.
+   *
+   * Flow:
+   * 1. Wait for Alice's /multisig/exn notification wrapping /ipex/grant
+   *    to extract the datetime, apply SAID, and credential embeds.
+   * 2. Recreate the grant with ipex().grant() using the same datetime so
+   *    all members produce a grant with the same SAID.
+   * 3. Call submitGrant — KERIA validates the apply exists in this
+   *    agent's exchange DB.
+   * 4. Send /multisig/exn to notify other members.
+   */
+  async joinMultisigGrant(groupName: string, timeoutMs = 60000): Promise<void> {
+    // 1. Wait for /multisig/exn notification wrapping /ipex/grant.
+    console.log(`[${this.alias}] Waiting for /multisig/exn (grant) notification...`);
+    const notifications = await this.waitForNotification("/multisig/exn", timeoutMs);
+
+    let grantNotification: any;
+    let grantExnData: any;
+    for (const notification of notifications) {
+      const requests = await this.client.groups().getRequest(notification.a.d);
+      if (requests.length > 0 && requests[0].exn?.e?.exn?.r === "/ipex/grant") {
+        grantNotification = notification;
+        grantExnData = requests[0].exn.e.exn;
+        break;
+      }
+    }
+
+    if (!grantNotification || !grantExnData) {
+      throw new Error(`[${this.alias}] No /ipex/grant found in /multisig/exn notifications`);
+    }
+
+    const applySaid = grantExnData.p;            // parent = the apply
+    const grantDatetime = grantExnData.dt;       // datetime to match
+    const verifierPrefix = grantExnData.a.i;     // recipient of the grant = verifier
+
+    // Extract credential embeds from the initiator's grant
+    const acdcSerder = new Serder(grantExnData.e.acdc);
+    const issSerder = new Serder(grantExnData.e.iss);
+    const ancSerder = new Serder(grantExnData.e.anc);
+
+    console.log(`[${this.alias}] Found grant — apply=${applySaid}, verifier=${verifierPrefix}, dt=${grantDatetime}`);
+
+    // 2. Recreate the grant using the same datetime and embeds.
+    const [grant, gsigs, gend] = await this.client.ipex().grant({
+      senderName: groupName,
+      acdc: acdcSerder,
+      iss: issSerder,
+      anc: ancSerder,
+      recipient: verifierPrefix,
+      datetime: grantDatetime,
+      agreeSaid: applySaid,
+    });
+
+    // 3. Build /multisig/exn wrapping the grant — matching the wallet app's
+    //    submitMultisigGrant pattern exactly.
+    const gHab = await this.client.identifiers().get(groupName);
+    const mHab = await this.client.identifiers().get(this.aidName);
+    const members = await this.client.identifiers().members(groupName);
+    const myPrefix = await this.getAid();
+    const recp = members.signing
+        .map((m: any) => m.aid)
+        .filter((aid: string) => aid !== myPrefix);
+
+    const mstate = gHab["state"];
+    const seal = [
+      "SealEvent",
+      { i: gHab["prefix"], s: mstate["ee"]["s"], d: mstate["ee"]["d"] },
+    ];
+    const sigers = gsigs.map((sig: string) => new Siger({ qb64: sig }));
+    const ims = d(messagize(grant, sigers, seal));
+    let atc = ims.substring(grant.size);
+    atc += gend;
+    const gembeds = {
+      exn: [grant, atc],
+    };
+
+    // 4. Create the /multisig/exn exchange message and submit via submitGrant.
+    //    This matches the wallet app pattern: submitGrant receives the multisig
+    //    exchange (not the raw grant) with member AIDs (not the verifier).
+    const [exn, exnSigs, exnEnd] = await this.client
+        .exchanges()
+        .createExchangeMessage(
+            mHab,
+            "/multisig/exn",
+            { gid: gHab["prefix"] },
+            gembeds,
+            recp[0]
+        );
+
+    const op = await this.client
+        .ipex()
+        .submitGrant(groupName, exn, exnSigs, exnEnd, recp);
+
+    this.pushOperation(op);
+    await this.client.notifications().mark(grantNotification.i);
+
+    console.log(`[${this.alias}] Submitted multisig grant for group ${groupName}`);
+  }
+
+  /**
+   * Initiates a multisig IPEX grant (presentation) in response to an /ipex/apply.
+   *
+   * This is the INITIATOR counterpart to joinMultisigGrant — the first member
+   * to create and submit the grant. Other members then join via joinMultisigGrant.
+   *
+   * Prerequisites: the /ipex/apply must already exist in this agent's exchange DB
+   * (call Verifier.redeliverApply first), verifier + schema OOBIs must be resolved,
+   * and the credential must be available in this agent's credential store.
+   *
+   * @param groupName  - Alias of the multisig group identifier
+   * @param schemaSaid - SAID of the ACDC schema to present
+   * @param applySaid  - SAID of the /ipex/apply exchange (from Verifier.getApplySaid())
+   */
+  async initiateMultisigGrant(
+      groupName: string,
+      schemaSaid: string,
+      applySaid: string,
+  ): Promise<void> {
+    // 1. Poll for the apply exchange — KERIA may not have indexed it yet.
+    console.log(`[${this.alias}] Polling for apply exchange ${applySaid}...`);
+    let applyExn: any;
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 30000) {
+      try {
+        applyExn = await this.client.exchanges().get(applySaid);
+        break;
+      } catch (err: any) {
+        if (err?.message?.includes("404") || err?.status === 404) {
+          console.log(`[${this.alias}] Apply exchange not yet verified, retrying...`);
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          throw err;
+        }
+      }
+    }
+    if (!applyExn) {
+      throw new Error(`[${this.alias}] Timed out waiting for apply exchange ${applySaid}`);
+    }
+
+    const verifierAid = applyExn.exn.i; // sender of the apply = verifier
+    console.log(`[${this.alias}] Received apply from verifier ${verifierAid}, schema=${schemaSaid}`);
+
+    // 3. Find the credential matching the schema in this agent's credential store.
+    const creds = await this.client.credentials().list();
+    const cred = creds.find((c: any) => c.sad.s === schemaSaid);
+    if (!cred) {
+      throw new Error(
+          `[${this.alias}] No credential found for schema ${schemaSaid}`
+      );
+    }
+
+    const acdcSerder = new Serder(cred.sad);
+    const issSerder = new Serder(cred.iss);
+    const ancSerder = new Serder(cred.anc);
+    const datetime = new Date().toISOString().replace("Z", "000+00:00");
+
+    console.log(`[${this.alias}] Initiating grant for credential ${cred.sad.d} to verifier ${verifierAid}`);
+
+    // 3. Create /ipex/grant with the credential.
+    const [grant, gsigs, gend] = await this.client.ipex().grant({
+      senderName: groupName,
+      acdc: acdcSerder,
+      iss: issSerder,
+      anc: ancSerder,
+      recipient: verifierAid,
+      datetime,
+      agreeSaid: applySaid,
+    });
+
+    // 4. Build /multisig/exn wrapping the grant — matching the wallet app's
+    //    submitMultisigGrant pattern exactly.
+    const gHab = await this.client.identifiers().get(groupName);
+    const mHab = await this.client.identifiers().get(this.aidName);
+    const members = await this.client.identifiers().members(groupName);
+    const myPrefix = await this.getAid();
+    const recp = members.signing
+        .map((m: any) => m.aid)
+        .filter((aid: string) => aid !== myPrefix);
+
+    const mstate = gHab["state"];
+    const seal = [
+      "SealEvent",
+      { i: gHab["prefix"], s: mstate["ee"]["s"], d: mstate["ee"]["d"] },
+    ];
+    const sigers = gsigs.map((sig: string) => new Siger({ qb64: sig }));
+    const ims = d(messagize(grant, sigers, seal));
+    let atc = ims.substring(grant.size);
+    atc += gend;
+    const gembeds = {
+      exn: [grant, atc],
+    };
+
+    // 5. Create the /multisig/exn exchange message and submit via submitGrant.
+    //    This matches the wallet app pattern: submitGrant receives the multisig
+    //    exchange (not the raw grant) with member AIDs (not the verifier).
+    const [exn, exnSigs, exnEnd] = await this.client
+        .exchanges()
+        .createExchangeMessage(
+            mHab,
+            "/multisig/exn",
+            { gid: gHab["prefix"] },
+            gembeds,
+            recp[0]
+        );
+
+    const op = await this.client
+        .ipex()
+        .submitGrant(groupName, exn, exnSigs, exnEnd, recp);
+
+    this.pushOperation(op);
+
+    console.log(`[${this.alias}] Initiated multisig grant for group ${groupName}`);
+  }
 }
 
 export class RemoteJoiner extends VirtualWallet { }
@@ -439,6 +658,141 @@ export class RemoteInitiator extends VirtualWallet {
     this.pushOperation(group.operation);
 
     return { groupId };
+  }
+}
+
+export class Verifier extends VirtualWallet {
+  private lastApply?: { serder: Serder; sigs: string[] };
+
+  /**
+   * Sends an IPEX /ipex/apply to request a credential presentation from a holder.
+   *
+   * @param holderAid  - AID of the holder (group or individual)
+   * @param schemaSaid - SAID of the ACDC schema being requested
+   * @param attributes - Optional selective-disclosure attribute filters
+   */
+  async requestPresentation(params: {
+    holderAid: string;
+    schemaSaid: string;
+    attributes?: Record<string, unknown>;
+  }): Promise<void> {
+    console.log(
+        `[${this.aidName}] Requesting presentation of schema ${params.schemaSaid} from ${params.holderAid}`
+    );
+
+    const [apply, sigs] = await this.client.ipex().apply({
+      senderName: this.aidName,
+      recipient: params.holderAid,
+      message: "",
+      schemaSaid: params.schemaSaid,
+      attributes: params.attributes ?? {},
+    });
+
+    await this.client
+        .ipex()
+        .submitApply(this.aidName, apply, sigs, [params.holderAid]);
+
+    // Store apply artifacts so we can re-deliver to individual members later
+    this.lastApply = { serder: apply, sigs };
+
+    console.log(
+        `[${this.aidName}] Presentation request sent to ${params.holderAid}`
+    );
+  }
+
+  /**
+   * Returns the SAID of the last /ipex/apply sent by this verifier.
+   */
+  getApplySaid(): string {
+    if (!this.lastApply) {
+      throw new Error(`[${this.aidName}] No apply sent yet — call requestPresentation first`);
+    }
+    return this.lastApply.serder.ked.d;
+  }
+
+  /**
+   * Re-delivers the last /ipex/apply to additional recipients so their KERIA
+   * agents have the apply exchange in their own DB.
+   *
+   * Same pattern as Issuer.redeliverGrant — each virtual wallet's KERIA agent
+   * has an isolated DB, so the apply must be delivered individually.
+   */
+  async redeliverApply(recipientAids: string[]): Promise<void> {
+    if (!this.lastApply) {
+      throw new Error(`[${this.aidName}] No apply to redeliver — call requestPresentation first`);
+    }
+    for (const aid of recipientAids) {
+      console.log(`[${this.aidName}] Re-delivering apply to ${aid}`);
+      await this.client
+          .ipex()
+          .submitApply(this.aidName, this.lastApply.serder, this.lastApply.sigs, [aid]);
+    }
+  }
+
+  /**
+   * Waits for the holder's /ipex/grant (credential presentation) and admits it.
+   *
+   * @param timeoutMs - Max wait time for the grant notification (default 60s)
+   * @returns The credential SAID of the presented credential
+   */
+  async waitForPresentationAndAdmit(timeoutMs = 60000): Promise<string> {
+    console.log(`[${this.aidName}] Waiting for credential presentation (/ipex/grant)...`);
+
+    const notifications = await this.waitForNotification("/ipex/grant", timeoutMs);
+    const grantNotification = notifications[0];
+
+    // Poll for the grant exchange — KERIA may not have verified/indexed it yet
+    let grantExn: any;
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 30000) {
+      try {
+        grantExn = await this.client.exchanges().get(grantNotification.a.d);
+        break;
+      } catch (err: any) {
+        if (err?.message?.includes("404") || err?.status === 404) {
+          console.log(`[${this.aidName}] Grant exchange not yet verified, retrying...`);
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!grantExn) {
+      throw new Error(
+          `[${this.aidName}] Timed out waiting for grant exchange ${grantNotification.a.d} to be verified`
+      );
+    }
+
+    const holderAid = grantExn.exn.i;
+    const credentialSaid = grantExn.exn.e?.acdc?.d;
+
+    if (!credentialSaid) {
+      throw new Error(`[${this.aidName}] Grant did not contain a valid credential`);
+    }
+
+    console.log(
+        `[${this.aidName}] Received presentation — credential SAID: ${credentialSaid}, from: ${holderAid}`
+    );
+
+    // Acknowledge the presentation
+    const [admit, sigs, aend] = await this.client.ipex().admit({
+      senderName: this.aidName,
+      message: "",
+      grantSaid: grantNotification.a.d,
+      recipient: holderAid,
+      datetime: new Date().toISOString().replace("Z", "000+00:00"),
+    });
+
+    const admitOp = await this.client
+        .ipex()
+        .submitAdmit(this.aidName, admit, sigs, aend, [holderAid]);
+
+    await this.waitOperation(admitOp);
+    await this.client.notifications().mark(grantNotification.i);
+
+    console.log(`[${this.aidName}] Presentation admitted and acknowledged.`);
+    return credentialSaid;
   }
 }
 
