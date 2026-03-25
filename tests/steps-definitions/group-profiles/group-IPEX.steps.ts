@@ -257,6 +257,7 @@ Then(/^IPEX Alice approves the presentation request$/, async function () {
   // This sends /multisig/exn to Alice's wallet, which auto-joins the grant
   // in the background (see processMultiSigExnNotification → joinMultisigGrant).
   const applySaid = world.verifier!.getApplySaid();
+
   await firstMember.initiateMultisigGrant(
       world.aliceInitiatorGroupName,
       world.acdcSchemaSaid!,

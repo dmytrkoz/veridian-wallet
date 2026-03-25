@@ -170,6 +170,39 @@ export class VirtualWallet {
     }
   }
 
+  /**
+   * Debug helper: dumps all notifications visible to this agent's KERIA instance.
+   * Used to diagnose multisig co-signing issues from the test side.
+   */
+  async debugDumpNotifications(label?: string): Promise<void> {
+    const tag = label ? `[DEBUG ${label}]` : `[DEBUG ${this.alias}]`;
+    try {
+      const { notes } = await this.client.notifications().list(0, 100);
+      console.log(`${tag} === Notification dump (${notes.length} total) ===`);
+      for (const n of notes) {
+        console.log(`${tag}   id=${n.i}, route=${n.a.r}, said=${n.a.d}, read=${n.r}`);
+      }
+      if (notes.length === 0) {
+        console.log(`${tag}   (no notifications)`);
+      }
+    } catch (err) {
+      console.log(`${tag}   ERROR listing notifications: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Debug helper: checks the status of a specific operation by name.
+   */
+  async debugCheckOperation(opName: string, label?: string): Promise<void> {
+    const tag = label ? `[DEBUG ${label}]` : `[DEBUG ${this.alias}]`;
+    try {
+      const status = await this.client.operations().get(opName);
+      console.log(`${tag} Operation ${opName}: done=${status.done}, response=${JSON.stringify(status.response ?? {}).substring(0, 200)}`);
+    } catch (err) {
+      console.log(`${tag} Operation ${opName}: ERROR ${(err as Error).message}`);
+    }
+  }
+
   async acceptGroupInvitation(timeoutMs: number = 30000, groupName: string = "MultisigGroup") {
     console.log(`[${this.alias}] Waiting for group invitation (multisig/icp)...`);
 
@@ -448,8 +481,7 @@ export class VirtualWallet {
       agreeSaid: applySaid,
     });
 
-    // 3. Build /multisig/exn wrapping the grant — matching the wallet app's
-    //    submitMultisigGrant pattern exactly.
+    // 3. Wrap the grant in a /multisig/exn and submit (matching wallet app pattern).
     const gHab = await this.client.identifiers().get(groupName);
     const mHab = await this.client.identifiers().get(this.aidName);
     const members = await this.client.identifiers().members(groupName);
@@ -467,13 +499,8 @@ export class VirtualWallet {
     const ims = d(messagize(grant, sigers, seal));
     let atc = ims.substring(grant.size);
     atc += gend;
-    const gembeds = {
-      exn: [grant, atc],
-    };
 
-    // 4. Create the /multisig/exn exchange message and submit via submitGrant.
-    //    This matches the wallet app pattern: submitGrant receives the multisig
-    //    exchange (not the raw grant) with member AIDs (not the verifier).
+    const gembeds = { exn: [grant, atc] };
     const [exn, exnSigs, exnEnd] = await this.client
         .exchanges()
         .createExchangeMessage(
@@ -484,6 +511,7 @@ export class VirtualWallet {
             recp[0]
         );
 
+    // 4. Submit the wrapper — KERIA records signature AND delivers /multisig/exn.
     const op = await this.client
         .ipex()
         .submitGrant(groupName, exn, exnSigs, exnEnd, recp);
@@ -537,7 +565,7 @@ export class VirtualWallet {
     const verifierAid = applyExn.exn.i; // sender of the apply = verifier
     console.log(`[${this.alias}] Received apply from verifier ${verifierAid}, schema=${schemaSaid}`);
 
-    // 3. Find the credential matching the schema in this agent's credential store.
+    // 2. Find the credential matching the schema in this agent's credential store.
     const creds = await this.client.credentials().list();
     const cred = creds.find((c: any) => c.sad.s === schemaSaid);
     if (!cred) {
@@ -564,8 +592,10 @@ export class VirtualWallet {
       agreeSaid: applySaid,
     });
 
-    // 4. Build /multisig/exn wrapping the grant — matching the wallet app's
-    //    submitMultisigGrant pattern exactly.
+    // 4. Wrap the grant in a /multisig/exn and submit (matching wallet app pattern).
+    //    The wallet app's submitMultisigGrant creates a wrapper via createExchangeMessage,
+    //    then passes the wrapper to submitGrant. KERIA uses this to coordinate multisig
+    //    signing AND deliver /multisig/exn to other members in one atomic call.
     const gHab = await this.client.identifiers().get(groupName);
     const mHab = await this.client.identifiers().get(this.aidName);
     const members = await this.client.identifiers().members(groupName);
@@ -583,13 +613,8 @@ export class VirtualWallet {
     const ims = d(messagize(grant, sigers, seal));
     let atc = ims.substring(grant.size);
     atc += gend;
-    const gembeds = {
-      exn: [grant, atc],
-    };
 
-    // 5. Create the /multisig/exn exchange message and submit via submitGrant.
-    //    This matches the wallet app pattern: submitGrant receives the multisig
-    //    exchange (not the raw grant) with member AIDs (not the verifier).
+    const gembeds = { exn: [grant, atc] };
     const [exn, exnSigs, exnEnd] = await this.client
         .exchanges()
         .createExchangeMessage(
@@ -600,9 +625,12 @@ export class VirtualWallet {
             recp[0]
         );
 
+    // 5. Submit the wrapper — KERIA records signature AND delivers /multisig/exn.
     const op = await this.client
         .ipex()
         .submitGrant(groupName, exn, exnSigs, exnEnd, recp);
+
+    console.log(`[${this.alias}] submitGrant op=${op.name}, done=${op.done}`);
 
     this.pushOperation(op);
 
