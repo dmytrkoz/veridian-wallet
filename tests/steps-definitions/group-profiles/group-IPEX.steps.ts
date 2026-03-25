@@ -21,7 +21,7 @@ import {
 import ConnectionsScreen from "../../screen-objects/connections/connections.screen.js";
 import ConnectionsDetailsScreen from "../../screen-objects/connections/connections-details.screen.js";
 import { AliceInitiatorWorld } from "./group-profile.types.js";
-import {navigateToTab, navigateToTabUsingJsClick} from "../../helpers/tab.helper";
+import { navigateToTab, navigateToTabUsingJsClick } from "../../helpers/tab.helper";
 
 const CREDENTIAL_PENDING_TEXT = "Credential request pending";
 const NEW_CREDENTIAL_ADDED_TEXT = "New credential added";
@@ -58,7 +58,7 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
   await groupShareButton.click();
 
   const groupOobi = (await browser.execute(
-      () => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi
+    () => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi
   )) as string | undefined;
 
   if (!groupOobi) {
@@ -77,7 +77,7 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
 
   // Wait for the issuer connection to appear on the Connections page
   await waitUpTo(
-      async () => await pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS)
+    async () => await pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS)
   );
 
   await world.issuer.resolveOobi(groupOobi, "MultisigGroup");
@@ -85,39 +85,48 @@ When(/^IPEX Alice connects the credential issuer$/, async function () {
   world.groupAid = groupOobi.split("/oobi/")[1].split("/")[0];
 
   await waitUpTo(
-      async () => {
-        const hasPending = await pageContainsText("Pending");
-        return !hasPending;
-      }
+    async () => {
+      const hasPending = await pageContainsText("Pending");
+      return !hasPending;
+    }
   );
 });
 
 When(/^IPEX the credential issuer offers a "([^"]*)" credential to Alice's group$/,
-    async function (credentialName: string) {
-      const world = this as AliceInitiatorWorld;
-      const registry = await world.issuer!.createRegistry("issuer-registry");
-      const acdcSchemaSaid = ACDC_SCHEMAS[credentialName];
-      world.acdcSchemaSaid = acdcSchemaSaid;
-      // Resolve schema from the local server instead of cred-issuance container
-      const schemaOobi = getSchemaOobi(acdcSchemaSaid);
-      await world.issuer!.resolveOobi(schemaOobi, credentialName);
-      const credentialSaid = await world.issuer!.issueCredential({
-        registry: registry.regk,
-        schemaSaid: acdcSchemaSaid,
-        recipientId: world.groupAid!,
-        claims: {
-          attendeeName: "Alice",
-        },
-      });
-      // Embed the schema server URL in the grant so the wallet resolves
-      // schemas via getInlineSchemaOobiBase(), bypassing the indexer/ESSR
-      // path that fails from the Android emulator.
-      await world.issuer!.grantCredential(
-          credentialSaid,
-          world.groupAid!,
-          getSchemaServerOobiBase(),
-      );
+  async function (credentialName: string) {
+    const world = this as AliceInitiatorWorld;
+
+    // Members Resolve Issuer's OOBI
+    const issuerOobi = await world.issuer!.getOobi({ alias: CF_CREDENTIAL_ISSUANCE_ALIAS });
+    for (const [, member] of Object.entries(world.virtualMembers!)) {
+      await member.instance.resolveOobi(issuerOobi, CF_CREDENTIAL_ISSUANCE_ALIAS);
     }
+
+    // Registry Creation
+    const registry = await world.issuer!.createRegistry("issuer-registry");
+    const acdcSchemaSaid = ACDC_SCHEMAS[credentialName];
+    world.acdcSchemaSaid = acdcSchemaSaid;
+
+    // Resolve schema from the local server instead of cred-issuance container
+    const schemaOobi = getSchemaOobi(acdcSchemaSaid);
+    await world.issuer!.resolveOobi(schemaOobi, credentialName);
+    const credentialSaid = await world.issuer!.issueCredential({
+      registry: registry.regk,
+      schemaSaid: acdcSchemaSaid,
+      recipientId: world.groupAid!,
+      claims: {
+        attendeeName: "Alice",
+      },
+    });
+    // Embed the schema server URL in the grant so the wallet resolves
+    // schemas via getInlineSchemaOobiBase(), bypassing the indexer/ESSR
+    // path that fails from the Android emulator.
+    await world.issuer!.grantCredential(
+      credentialSaid,
+      world.groupAid!,
+      getSchemaServerOobiBase(),
+    );
+  }
 );
 
 Then(/^IPEX Alice receives the offered credential as the initiator$/, async function () {
@@ -128,8 +137,8 @@ Then(/^IPEX Alice receives the offered credential as the initiator$/, async func
   await confirmNotificationWithPasscode(world.passcode);
 
   await waitUpTo(
-      async () => pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS),
-      3000
+    async () => pageContainsText(CF_CREDENTIAL_ISSUANCE_ALIAS),
+    3000
   );
 });
 
@@ -140,34 +149,13 @@ When(/^all members join the multisig admit$/, async function () {
     return;
   }
 
-  if (!world.virtualMembers || !world.aliceInitiatorGroupName) {
-    throw new Error("No virtual members or group name found");
-  }
-
-  // Resolve the issuer's OOBI and schema OOBI for all virtual members so their
-  // KERIA agents can validate the credential grant.
-  const issuerOobi = await world.issuer!.getOobi({ alias: CF_CREDENTIAL_ISSUANCE_ALIAS });
-  const schemaOobi = getSchemaOobi(world.acdcSchemaSaid!);
-  for (const [, member] of Object.entries(world.virtualMembers)) {
-    await member.instance.resolveOobi(issuerOobi, CF_CREDENTIAL_ISSUANCE_ALIAS);
-    await member.instance.resolveOobi(schemaOobi, "schema");
-  }
-
-  const memberAids: string[] = [];
-  for (const [, member] of Object.entries(world.virtualMembers)) {
-    const memberOobi = await member.instance.getOobi({ alias: member.instance.aidName });
-    await world.issuer!.resolveOobi(memberOobi, member.instance.aidName);
-    memberAids.push(await member.instance.getAid());
-  }
-  await world.issuer!.redeliverGrant(memberAids);
-
   // All virtual members submit their co-signatures
-  for (const [, member] of Object.entries(world.virtualMembers)) {
-    await member.instance.joinMultisigAdmit(world.aliceInitiatorGroupName);
+  for (const [, member] of Object.entries(world.virtualMembers!)) {
+    await member.instance.joinMultisigAdmit(world.aliceInitiatorGroupName!);
   }
 
   // Wait for all pending operations (admit) to complete on KERIA
-  for (const [, member] of Object.entries(world.virtualMembers)) {
+  for (const [, member] of Object.entries(world.virtualMembers!)) {
     await member.instance.waitPendingOperations();
   }
 });
