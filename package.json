@@ -192,6 +192,12 @@
     },
     "@appium/support": {
       "yauzl": "^3.2.1"
+    },
+    "appium": {
+      "yaml": "^2.8.3"
+    },
+    "@appium/docutils": {
+      "yaml": "^2.8.3"
     }
   },
   "eslintConfig": {
