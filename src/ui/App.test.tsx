@@ -856,7 +856,7 @@ describe("System threat alert", () => {
 
     const deviceInfo = {
       platform: "android",
-      osVersion: "12.0",
+      osVersion: "14.0",
       model: "",
       operatingSystem: "android",
       manufacturer: "",
