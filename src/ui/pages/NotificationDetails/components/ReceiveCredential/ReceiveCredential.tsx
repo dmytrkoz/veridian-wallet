@@ -7,7 +7,7 @@ import {
   personCircleOutline,
   swapHorizontalOutline,
 } from "ionicons/icons";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Agent } from "../../../../../core/agent/agent";
 import {
   ACDCDetails,
@@ -202,7 +202,7 @@ const ReceiveCredential = ({
     }
   };
 
-  const moveContentToCenter = () => {
+  const moveContentToCenter = useCallback(() => {
     if (!iconsRowRef.current) return;
     const header = document.getElementsByClassName("page-header")?.[0];
     if (!header) return;
@@ -222,7 +222,16 @@ const ReceiveCredential = ({
     const translateY = opticalCenter - headerHeight - combinedHeight / 2;
 
     iconsRowRef.current.style.transform = `translateY(${translateY}px)`;
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isAccepting) {
+      window.addEventListener("resize", moveContentToCenter);
+      return () => {
+        window.removeEventListener("resize", moveContentToCenter);
+      };
+    }
+  }, [isAccepting, moveContentToCenter]);
 
   const removeContentTranslation = () => {
     if (!iconsRowRef.current) return;
