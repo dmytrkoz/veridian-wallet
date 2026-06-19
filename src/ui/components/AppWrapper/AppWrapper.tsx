@@ -5,6 +5,7 @@ import { Device } from "@capacitor/device";
 import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { Agent } from "../../../core/agent/agent";
+import { devSeedOnboarded } from "../../../core/agent/devSeed";
 import {
   ConnectionStatus,
   MiscRecordId,
@@ -857,6 +858,25 @@ const AppWrapper = (props: { children: ReactNode }) => {
       // This will skip the onboarding screen with dev mode.
       if (process.env.DEV_SKIP_ONBOARDING === "true") {
         await agent.devPreload();
+      }
+
+      // DEV/E2E ONLY: expose a seed hook so e2e tests can fast-onboard,
+      // skipping the ~50s UI onboarding precondition. Stripped from prod:
+      // `process.env.ENVIRONMENT` is inlined by webpack DefinePlugin, so in a
+      // prod build this becomes `"prod" !== "prod"` and Terser dead-code-
+      // eliminates the block (matching the existing ENVIRONMENT !== "prod"
+      // stripping the codebase relies on).
+      if (process.env.ENVIRONMENT !== "prod") {
+        (
+          window as unknown as {
+            __seedOnboarded?: (opts: {
+              bootUrl: string;
+              connectUrl: string;
+              displayName?: string;
+            }) => Promise<string | undefined>;
+          }
+        ).__seedOnboarded = (opts) =>
+          devSeedOnboarded({ agentInstance: agent, ...opts });
       }
       const {
         keriaConnectUrlRecord: cachedKeriaRecord,
