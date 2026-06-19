@@ -28,18 +28,29 @@ async function dismissNotificationPermission(): Promise<void> {
   }
 }
 
+interface SeedOpts {
+  displayName?: string;
+  atProfileSetup?: boolean;
+}
+
 /**
- * Fast-onboard fixture. Reproduces the onboarded state via the dev-only in-app
- * `window.__seedOnboarded` hook (Agent.devSeedOnboarded), then relaunches so the
- * real init path routes to Home. Deterministic ~19s drop-in for the ~50s UI
- * onboarding precondition.
+ * Fast-onboard fixture. Reproduces a post-onboarding state via the dev-only
+ * in-app `window.__seedOnboarded` hook (core/agent/devSeed), then relaunches so
+ * the genuine init path hydrates state and routes. Deterministic ~19s drop-in
+ * for the ~50s UI onboarding precondition.
  *
- * @param displayName when set, seeds one identifier so the app lands on a
- *                     populated Home; when omitted, lands on an empty Home.
+ * @param opts         forwarded to the seed hook:
+ *                       - `atProfileSetup` -> lands on the first-run Profile
+ *                         Setup screen (no profile yet);
+ *                       - `displayName`    -> seeds one identifier (Home);
+ *                       - neither          -> empty Home.
+ * @param targetTestId the data-testid that proves the app reached the expected
+ *                     screen (e.g. "tab-button-home" or "profile-setup-page").
  * @returns the seeded identifier id, or undefined when none was created.
  */
-async function seedAndLand(
-  displayName?: string
+async function seedThenLand(
+  opts: SeedOpts,
+  targetTestId: string
 ): Promise<string | undefined> {
   // boot 10.0.2.2:3903, connect 10.0.2.2:3901 on the Android emulator
   const { bootUrl, connectUrl } = getSSIAgentUrls();
@@ -65,7 +76,7 @@ async function seedAndLand(
       (
         bUrl: string,
         cUrl: string,
-        name: string,
+        seedOpts: SeedOpts,
         done: (r: { ok?: boolean; aid?: string; error?: string }) => void
       ) => {
         const w = window as unknown as {
@@ -73,18 +84,16 @@ async function seedAndLand(
             bootUrl: string;
             connectUrl: string;
             displayName?: string;
+            atProfileSetup?: boolean;
           }) => Promise<string | undefined>;
         };
-        const opts: { bootUrl: string; connectUrl: string; displayName?: string } =
-          { bootUrl: bUrl, connectUrl: cUrl };
-        if (name) opts.displayName = name;
-        w.__seedOnboarded(opts)
+        w.__seedOnboarded({ bootUrl: bUrl, connectUrl: cUrl, ...seedOpts })
           .then((aid) => done({ ok: true, aid }))
           .catch((e) => done({ error: String(e && e.message ? e.message : e) }));
       },
       bootUrl,
       connectUrl,
-      displayName ?? ""
+      opts
     )) as { ok?: boolean; aid?: string; error?: string };
 
     if (result.ok) {
@@ -95,14 +104,13 @@ async function seedAndLand(
     }
   }
 
-  // Relaunch so the genuine AppWrapper init hydrates state and routes to Home.
+  // Relaunch so the genuine AppWrapper init hydrates state and routes.
   await driver.switchContext("NATIVE_APP");
   await driver.terminateApp(APP_ID);
   await driver.activateApp(APP_ID);
 
   // On launch the app requests notification permission — a native dialog that
-  // sits on top of the webview and blocks Home. Pre-grant it and dismiss the
-  // dialog if it already appeared.
+  // sits on top of the webview and blocks the screen. Dismiss it if present.
   await dismissNotificationPermission();
 
   // Re-attach to the webview — it re-registers a few seconds after relaunch,
@@ -130,17 +138,17 @@ async function seedAndLand(
     }
   );
 
-  // Init runs a cloud migration + agent reconnect, so Home can take a while.
-  // Wait for either the lock screen or the Home tab, whichever appears first.
+  // Init runs a cloud migration + agent reconnect, so the target can take a
+  // while. Wait for either the lock screen or the target, whichever is first.
   const passcodePad = () => $('[data-testid="passcode-button-1"]');
-  const homeTab = () => $('[data-testid="tab-button-home"]');
+  const target = () => $(`[data-testid="${targetTestId}"]`);
   await browser.waitUntil(
     async () =>
-      (await passcodePad().isExisting()) || (await homeTab().isExisting()),
+      (await passcodePad().isExisting()) || (await target().isExisting()),
     {
       timeout: 90000,
       interval: 1500,
-      timeoutMsg: "Neither lock screen nor Home appeared after relaunch",
+      timeoutMsg: `Neither lock screen nor ${targetTestId} appeared after relaunch`,
     }
   );
 
@@ -149,24 +157,33 @@ async function seedAndLand(
     await PasscodeScreen.enterPasscode(DEV_PASSCODE);
   }
 
-  // Confirm we landed on the Home dashboard tab (not Profile Setup).
-  await homeTab().waitForDisplayed({ timeout: 60000 });
+  // Confirm we landed on the expected screen.
+  await target().waitForDisplayed({ timeout: 60000 });
 
   return seededAid;
 }
 
 // Empty Home (no identifier) — drop-in for scenarios that add the first one.
 Given(/^user is onboarded \(seed\)$/, async function () {
-  this.seededAid = await seedAndLand();
+  this.seededAid = await seedThenLand({}, "tab-button-home");
 });
 
 // Populated Home — seeds one identifier for scenarios that need an existing one.
 Given(
   /^user is onboarded \(seed\) with an identifier(?: "([^"]*)")?$/,
   async function (name?: string) {
-    this.seededAid = await seedAndLand(name || "Test Identifier");
+    this.seededAid = await seedThenLand(
+      { displayName: name || "Test Identifier" },
+      "tab-button-home"
+    );
   }
 );
+
+// First-run Profile Setup, no profile yet — for flows that create a group or
+// individual profile on that screen (e.g. multisig group-profiles).
+Given(/^user is onboarded \(seed\) at profile setup$/, async function () {
+  this.seededAid = await seedThenLand({ atProfileSetup: true }, "profile-setup-page");
+});
 
 Then(/^user can see the Home screen$/, async function () {
   await $('[data-testid="tab-button-home"]').waitForDisplayed({

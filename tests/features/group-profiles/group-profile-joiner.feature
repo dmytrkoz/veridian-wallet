@@ -1,16 +1,7 @@
 Feature: Group Profile Multisig (Joiner)
 
   Background:
-    Given user tap Get Started button on Onboarding screen
-    And user generate passcode on Passcode screen
-    And user skip Biometric popup if it exist
-    And skip Create Password screen
-    And user is on Connect to Veridian screen
-    And user navigates to SSI Agent Advanced Setup screen
-    And SSI Agent URLs are cleared
-    When user enters boot URL "default"
-    And user enters connect URL "default"
-    And user tap Validate button on SSI Agent Details screen
+    Given user is onboarded (seed) at profile setup
 
   @onboarding @profile @group @multisig @joiner
   Scenario Outline: Joiner joins <required>-of-<recovery> multisig group created by remote initiator and it becomes active

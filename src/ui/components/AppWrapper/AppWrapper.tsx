@@ -873,6 +873,7 @@ const AppWrapper = (props: { children: ReactNode }) => {
               bootUrl: string;
               connectUrl: string;
               displayName?: string;
+              atProfileSetup?: boolean;
             }) => Promise<string | undefined>;
           }
         ).__seedOnboarded = (opts) =>

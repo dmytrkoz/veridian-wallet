@@ -46,9 +46,25 @@ Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^
     await ProfileSetupScreen.waitForProfileSetupScreen();
     await ProfileSetupScreen.enterUsername("Alice");
     await ProfileSetupScreen.confirmButton.click();
-    await ProfileSetupScreen.waitForWelcomeScreen();
-    await expect(ProfileSetupScreen.continueButton).toBeDisplayed();
-    await ProfileSetupScreen.continueButton.click();
+    // FinishSetup (Welcome) may be skipped when the agent reconnects
+    // mid-wizard (e.g. seeded onboarding) and the app navigates straight to
+    // group-profile-setup. Tolerate both: click Continue only if Welcome shows.
+    // (Mirrors the joiner step's handling.)
+    await waitUpTo(
+      async () => {
+        const welcomeExists = await ProfileSetupScreen.welcomeTitle
+          .isExisting()
+          .catch(() => false);
+        const url = await browser.getUrl().catch(() => "");
+        return welcomeExists || url.includes("group-profile-setup");
+      },
+      15000
+    );
+    const urlAfterCreate = await browser.getUrl().catch(() => "");
+    if (!urlAfterCreate.includes("group-profile-setup")) {
+      await expect(ProfileSetupScreen.continueButton).toBeDisplayed();
+      await ProfileSetupScreen.continueButton.click();
+    }
 
     await waitUpTo(
       async () => {
