@@ -1,0 +1,52 @@
+name: integration-test
+
+# Headless multisig integration tests: the app's REAL Agent/multiSigService +
+# real signify drive a group ceremony to "Active" against a REAL KERIA stack,
+# in Node — no emulator. This is the multisig real-backend PR gate (the
+# emulator e2e is impractical to run here), complementing the mocked unit tests.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  multisig-integration:
+    timeout-minutes: 20
+    runs-on: ${{ fromJson(vars.RUNS_ON) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start KERIA + witnesses
+        # Only the backend the ceremony needs; skip the cred-issuance build.
+        run: docker compose up -d keria witnesses
+
+      - name: Wait for KERIA + witnesses to be ready
+        run: |
+          npx wait-on --timeout 120000 \
+            tcp:127.0.0.1:3901 \
+            tcp:127.0.0.1:3903 \
+            tcp:127.0.0.1:5642
+
+      - name: Run multisig integration tests
+        env:
+          KERIA_IP: 127.0.0.1
+        run: npm run test:integration
+
+      - name: Dump KERIA logs on failure
+        if: failure()
+        run: docker compose logs keria witnesses
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
