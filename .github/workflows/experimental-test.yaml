@@ -138,7 +138,10 @@ jobs:
         run: |
           npm install -g appium
           appium driver install uiautomator2 || appium driver update uiautomator2
-          appium --log-level error &
+          # chromedriver_autodownload: the emulator's WebView is Chrome 91, so
+          # appium must fetch the matching chromedriver at runtime to switch into
+          # the app's webview context (no relaxed-security needed — just this).
+          appium --log-level error --allow-insecure chromedriver_autodownload &
 
       - name: Wait for Appium to be ready
         run: npx wait-on --timeout 120s http-get://127.0.0.1:4723/status
