@@ -1,0 +1,189 @@
+name: experimental-test
+
+# Experimental multisig test pipeline, two independent jobs:
+#  - multisig-integration: the app's real services + real signify drive a group
+#    ceremony to "Active" against real KERIA, headless in Node (no emulator).
+#  - multisig-e2e: the same flow through the real UI on an emulator, using the
+#    fast-seed onboarding fixture to skip the slow manual onboarding.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  multisig-integration:
+    timeout-minutes: 20
+    runs-on: ${{ fromJson(vars.RUNS_ON) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start KERIA + witnesses
+        # Only the backend the ceremony needs; skip the cred-issuance build.
+        run: docker compose up -d keria witnesses
+
+      - name: Wait for KERIA + witnesses to be ready
+        run: |
+          npx wait-on --timeout 120000 \
+            tcp:127.0.0.1:3901 \
+            tcp:127.0.0.1:3903 \
+            tcp:127.0.0.1:5642
+
+      - name: Run multisig integration tests
+        env:
+          KERIA_IP: 127.0.0.1
+        run: |
+          mkdir -p tests/.reports
+          npm run test:integration -- --json --outputFile=tests/.reports/integration-results.json
+
+      - name: Upload integration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisig-integration-results
+          path: tests/.reports/integration-results.json
+          if-no-files-found: warn
+
+      - name: Dump KERIA logs on failure
+        if: failure()
+        run: docker compose logs keria witnesses
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
+
+  multisig-e2e:
+    timeout-minutes: 30
+    runs-on: ${{ fromJson(vars.RUNS_ON) }}
+    steps:
+      - name: Delete unnecessary tools 🔧
+        if: ${{ runner.os == 'Linux' }}
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          android: false
+          tool-cache: true
+          dotnet: true
+          haskell: true
+          swap-storage: true
+          docker-images: false
+          large-packages: false
+
+      - name: Enable KVM group perms
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls /dev/kvm
+
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start KERIA + witnesses
+        run: docker compose up -d keria witnesses
+
+      - name: Wait for KERIA + witnesses to be ready
+        run: |
+          npx wait-on --timeout 120000 \
+            tcp:127.0.0.1:3901 \
+            tcp:127.0.0.1:3903 \
+            tcp:127.0.0.1:5642
+
+      - name: Build project for E2E
+        timeout-minutes: 8
+        run: |
+          export LANG=en_US.UTF-8
+          export KERIA_IP=10.0.2.2
+          npm run build:e2e
+
+      - name: Build Android APK
+        timeout-minutes: 12
+        run: |
+          cd android
+          ./gradlew assembleDebug
+          cd ..
+          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
+          echo "APP_PATH=$APK_PATH" >> "$GITHUB_ENV"
+
+      - name: Start Appium
+        run: |
+          npm install -g appium
+          appium driver install uiautomator2 || appium driver update uiautomator2
+          appium --log-level error &
+
+      - name: Wait for Appium to be ready
+        run: npx wait-on --timeout 120s http-get://127.0.0.1:4723/status
+
+      - name: Run multisig group-profile E2E (fast onboarding)
+        # Hard cap so a stuck emulator/test fails fast (logs become readable)
+        # instead of idling to the job timeout.
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
+        env:
+          NODE_OPTIONS: "--max_old_space_size=8192"
+        with:
+          api-level: 31
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          # Fail fast if the emulator never reports boot_completed (KVM issue, etc).
+          emulator-boot-timeout: 420
+          emulator-options: -no-window -no-audio -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+          disable-animations: true
+          disk-size: 6000M
+          heap-size: 600M
+          # Single line on purpose: the runner does not honor `\` continuations
+          # here, and a split command silently drops the filter args (runs all
+          # specs). @smoke = the one representative row (1-of-2); the matrix is
+          # covered headless by integration + unit.
+          script: npm run wdio:android:s24ultra -- --spec ./tests/features/group-profiles/group-profile-initiator.feature --cucumberOpts.tagExpression=@smoke
+
+      - name: Generate Allure report
+        if: always()
+        run: npx allure generate tests/.reports/allure-results --clean -o tests/.reports/allure-report || true
+
+      - name: Upload E2E Allure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisig-e2e-allure
+          path: |
+            tests/.reports/allure-results
+            tests/.reports/allure-report
+          if-no-files-found: warn
+
+      - name: Dump KERIA logs on failure
+        if: failure()
+        run: docker compose logs keria witnesses
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f appium || true
+          docker compose down -v
