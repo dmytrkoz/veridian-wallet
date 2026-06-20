@@ -152,13 +152,10 @@ jobs:
 
       - name: Build project for E2E
         timeout-minutes: 8
-        # Skip the typecheck baked into `build:e2e`; the main pr-check workflow
-        # already gates typing, so re-running it here only slows time-to-test.
         run: |
           export LANG=en_US.UTF-8
           export KERIA_IP=10.0.2.2
-          npm run build:local
-          npx cap sync
+          npm run build:e2e
 
       - name: Build Android APK
         timeout-minutes: 12
