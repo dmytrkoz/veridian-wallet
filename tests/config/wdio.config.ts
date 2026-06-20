@@ -166,6 +166,34 @@ export const config: Options.Testrunner = {
     // The native screenshot is taken later, after switching out of the webview
     // context (a screenshot in webview context comes back blank).
     if (!result.passed) {
+      // TEMP DIAGNOSTIC (remove with the AppWrapper __e2eErrors buffer once the
+      // multisig white-screen is root-caused): probe the webview before the
+      // native switch — distinguishes a React crash (window.__e2eErrors
+      // populated) from a blank reload (rootChildCount 0, href changed) from a
+      // capture artifact (rootChildCount > 0). Runs in whatever context the
+      // scenario left, i.e. the app webview.
+      try {
+        const probe = await driver.execute(() => {
+          const w = window as unknown as { __e2eErrors?: string[] };
+          const root = document.getElementById("root");
+          return {
+            href: location.href,
+            title: document.title,
+            rootChildCount: root ? root.childElementCount : -1,
+            bodyLen: document.body ? document.body.innerHTML.length : -1,
+            errors: w.__e2eErrors ?? null,
+          };
+        });
+        allureReporter.addAttachment(
+          "Webview probe on failure",
+          JSON.stringify(probe, null, 2),
+          "application/json"
+        );
+        console.log("[WDIO] webview probe on failure:", JSON.stringify(probe));
+      } catch (e) {
+        console.warn("[WDIO] failure webview probe failed:", e);
+      }
+
       try {
         const src = await driver.getPageSource();
         allureReporter.addAttachment("Page source on failure", src, "text/xml");

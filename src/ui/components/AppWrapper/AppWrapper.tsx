@@ -878,6 +878,38 @@ const AppWrapper = (props: { children: ReactNode }) => {
           }
         ).__seedOnboarded = (opts) =>
           devSeedOnboarded({ agentInstance: agent, ...opts });
+
+        // DEV/E2E ONLY (TEMP DIAGNOSTIC — remove once the multisig e2e
+        // white-screen is root-caused): buffer uncaught errors / rejections on
+        // window so the wdio failure hook can read what tore the React tree
+        // down after the OOBI paste. Same prod-strip guard as the seed hook.
+        const errWin = window as unknown as {
+          __e2eErrors?: string[];
+          __e2eErrorsInstalled?: boolean;
+        };
+        if (!errWin.__e2eErrorsInstalled) {
+          errWin.__e2eErrorsInstalled = true;
+          errWin.__e2eErrors = [];
+          const push = (label: string, detail: unknown) => {
+            try {
+              const e = detail as { stack?: string; message?: string };
+              errWin.__e2eErrors!.push(
+                `[${new Date().toISOString()}] ${label}: ${
+                  (e && (e.stack || e.message)) || String(detail)
+                }`
+              );
+              if (errWin.__e2eErrors!.length > 20) errWin.__e2eErrors!.shift();
+            } catch {
+              // never let the diagnostic itself throw
+            }
+          };
+          window.addEventListener("error", (ev) =>
+            push("error", ev.error ?? ev.message)
+          );
+          window.addEventListener("unhandledrejection", (ev) =>
+            push("unhandledrejection", ev.reason)
+          );
+        }
       }
       const {
         keriaConnectUrlRecord: cachedKeriaRecord,
