@@ -22,6 +22,11 @@ const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
 // transitions; it returns as soon as the element appears, so fast runs pay nothing.
 const SCREEN_TRANSITION_TIMEOUT = 15000;
 
+// A pasted member's OOBI is resolved against keria asynchronously after the
+// input modal closes; only that completion returns the app to the SetupMembers
+// tab. Allow extra time for it on a loaded CI emulator.
+const MEMBER_RESOLVE_TIMEOUT = 30000;
+
 type AliceInitiatorWorld = {
   aliceInitiatorGroupName?: string;
   aliceInitiatorGroupId?: string | null;
@@ -159,6 +164,15 @@ When(/^Alice pastes all member OOBIs on the Scan tab$/, async function () {
     if (await toastContainsText(GROUP_ID_MISMATCH_MSG)) {
       throw new Error(`Group ID mismatch for member ${name} — scan rejected.`);
     }
+
+    // Closing the paste modal does not mean the member is resolved: the app
+    // only leaves the Scan tab (re-showing the segment control, which holds
+    // share-oobi-segment-button) once the OOBI resolves against keria. Wait for
+    // that here so the next step isn't racing a still-active scanner — the cause
+    // of the CI-only "share-oobi-segment-button not displayed" failure.
+    await $("[data-testid='setup-members-segment']").waitForDisplayed({
+      timeout: MEMBER_RESOLVE_TIMEOUT,
+    });
   }
 
 });
