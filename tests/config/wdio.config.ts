@@ -160,18 +160,17 @@ export const config: Options.Testrunner = {
     const { driver } = await import("@wdio/globals");
     const appPackage = "org.cardanofoundation.idw";
 
-    // On failure, attach a screenshot to the allure report so CI failures are
-    // diagnosable without re-running locally. Taken before the app is torn down.
+    // On failure, capture the webview DOM first — it shows which testids are
+    // actually rendered, the most useful clue for an "element not found" (and
+    // the only window into a CI-only failure that can't be reproduced locally).
+    // The native screenshot is taken later, after switching out of the webview
+    // context (a screenshot in webview context comes back blank).
     if (!result.passed) {
       try {
-        const png = await driver.takeScreenshot();
-        allureReporter.addAttachment(
-          "Screenshot on failure",
-          Buffer.from(png, "base64"),
-          "image/png"
-        );
+        const src = await driver.getPageSource();
+        allureReporter.addAttachment("Page source on failure", src, "text/xml");
       } catch (e) {
-        console.warn("[WDIO] failure screenshot capture failed:", e);
+        console.warn("[WDIO] failure page-source capture failed:", e);
       }
     }
 
@@ -201,6 +200,20 @@ export const config: Options.Testrunner = {
           try {
             await driver.switchContext('NATIVE_APP');
           } catch (e) {}
+        }
+      }
+      // Now in native context: a screenshot captures the full device screen
+      // (what the app actually shows at the point of failure).
+      if (!result.passed) {
+        try {
+          const png = await driver.takeScreenshot();
+          allureReporter.addAttachment(
+            "Screenshot on failure",
+            Buffer.from(png, "base64"),
+            "image/png"
+          );
+        } catch (e) {
+          console.warn("[WDIO] failure screenshot capture failed:", e);
         }
       }
       await driver.terminateApp(appPackage);
