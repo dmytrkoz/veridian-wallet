@@ -6,6 +6,7 @@ import {
 } from "../../src/core/storage/secureStorage/secureStorage";
 import { getKeriaUrlsForTestRunner } from "../helpers/ssi-agent-urls.helper";
 import { KERIA_REACHABLE_TIMEOUT_MS } from "./constants";
+import { waitForStableOnline } from "./online";
 
 /**
  * Boot the app's REAL Agent headless against the keria stack, and start the
@@ -39,6 +40,10 @@ export async function bootAppAgent(): Promise<Agent> {
   agent.keriaNotifications.startPolling();
   void agent.keriaNotifications.pollNotifications();
   void agent.keriaNotifications.pollLongOperations();
+
+  // Ride out the first poll cycle's reconnect churn (CI load) so the ceremony's
+  // first synchronous op can't race a transient offline flip.
+  await waitForStableOnline();
 
   return agent;
 }

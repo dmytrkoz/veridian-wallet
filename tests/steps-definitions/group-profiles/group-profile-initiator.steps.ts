@@ -16,6 +16,12 @@ import {
 
 const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
 
+// The base config's waitforTimeout (1.5s) is too tight for a heavy multisig
+// screen transition on a loaded CI emulator, where the element renders in a few
+// seconds — the cause of the share-oobi-segment-button flake. Wait up to this on
+// transitions; it returns as soon as the element appears, so fast runs pay nothing.
+const SCREEN_TRANSITION_TIMEOUT = 15000;
+
 type AliceInitiatorWorld = {
   aliceInitiatorGroupName?: string;
   aliceInitiatorGroupId?: string | null;
@@ -76,12 +82,12 @@ Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^
 
     // Capture Alice's OOBI for members
     const provideTab = $("[data-testid='share-oobi-segment-button']");
-    await provideTab.waitForDisplayed();
+    await provideTab.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
     await provideTab.click();
     await installShareCapture();
 
     const shareButton = $(".share-profile-oobi .share-button");
-    await shareButton.waitForDisplayed();
+    await shareButton.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
     await shareButton.scrollIntoView?.().catch(() => { });
     await shareButton.click();
     const aliceOobiUrl = (await browser.execute(() => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi)) as string | undefined;
@@ -140,7 +146,7 @@ When(/^Alice pastes all member OOBIs on the Scan tab$/, async function () {
   const scanTab = $("[data-testid='scan-profile-segment-button']");
 
   for (const [name, member] of Object.entries(world.virtualMembers)) {
-    await scanTab.waitForDisplayed();
+    await scanTab.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
     await scanTab.click();
 
     const oobiForApp = await member.instance.getOobi({
@@ -159,13 +165,13 @@ When(/^Alice pastes all member OOBIs on the Scan tab$/, async function () {
 
 When(/^Alice initiates the group identifier$/, async function () {
   const provideTab = $("[data-testid='share-oobi-segment-button']");
-  await provideTab.waitForDisplayed();
+  await provideTab.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await provideTab.click();
   const initiateBtn = $("[data-testid='primary-button-setup-group-profile']");
-  await initiateBtn.waitForDisplayed();
+  await initiateBtn.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await initiateBtn.click();
   const alertConfirmBtn = $("[data-testid='alert-confirm-init-group-confirm-button']");
-  await alertConfirmBtn.waitForDisplayed();
+  await alertConfirmBtn.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await alertConfirmBtn.click();
 
   await waitUpTo(
@@ -198,7 +204,7 @@ When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async func
   }
   const requiredIncrease = $("[data-testid='requiredSigners-increase-threshold-button']");
   const recoveryIncrease = $("[data-testid='recoverySigners-increase-threshold-button']");
-  await requiredIncrease.waitForDisplayed();
+  await requiredIncrease.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   for (let i = 0; i < required; i++) {
     await requiredIncrease.click();
   }
@@ -206,13 +212,13 @@ When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async func
     await recoveryIncrease.click();
   }
   const signerModalConfirm = $("[data-testid='primary-button-setup-signer-modal']");
-  await signerModalConfirm.waitForDisplayed();
+  await signerModalConfirm.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await signerModalConfirm.click();
 });
 
 When(/^Alice sends the group requests$/, async function () {
   const sendRequestBtn = $("[data-testid='primary-button-init-group']");
-  await sendRequestBtn.waitForDisplayed();
+  await sendRequestBtn.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await sendRequestBtn.click();
 });
 

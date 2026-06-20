@@ -12,6 +12,7 @@ import {
   type MultisigConnectionDetails,
 } from "../../../src/core/agent/agent.types";
 import { pollUntil } from "../../helpers/poll";
+import { withOnlineRetry } from "../online";
 import {
   DEFAULT_THEME,
   GROUP_ACTIVE_TIMEOUT_MS,
@@ -25,6 +26,9 @@ export async function createAppMember(
   opts: { groupId: string; groupName: string; displayName: string }
 ): Promise<{ memberAid: string; oobi: string }> {
   const { groupId, groupName, displayName } = opts;
+  // createIdentifier is non-idempotent (a retry after a partial success would
+  // duplicate the alias) — the boot-time stable-online gate covers it instead.
+  // Only the read-back getOobi is safe to retry on a transient offline flip.
   const { identifier: memberAid } = await agent.identifiers.createIdentifier({
     displayName,
     theme: DEFAULT_THEME,
@@ -35,11 +39,13 @@ export async function createAppMember(
       proposedUsername: displayName,
     },
   });
-  const oobi = await agent.connections.getOobi(memberAid, {
-    alias: displayName,
-    groupId,
-    groupName,
-  });
+  const oobi = await withOnlineRetry(() =>
+    agent.connections.getOobi(memberAid, {
+      alias: displayName,
+      groupId,
+      groupName,
+    })
+  );
   return { memberAid, oobi };
 }
 

@@ -19,3 +19,15 @@ export const CASE_TIMEOUT_MS = 120000;
 
 /** Default identifier theme used across the app (single, non-themed). */
 export const DEFAULT_THEME = 0;
+
+/** Boot gate: require the agent to stay online this long before the ceremony,
+ *  so the first poll cycle's reconnect churn can't flip it offline mid-arrange. */
+export const STABLE_ONLINE_MS = 3000;
+
+/** Max wait for the agent to come (back) online — boot gate and retry recovery.
+ *  The poller's connect()-on-error recovers within a poll cycle or two. */
+export const ONLINE_WAIT_TIMEOUT_MS = 30000;
+
+/** Attempts for an arrange-phase keria op when the poller flips offline under
+ *  CI load; the in-app UI likewise retries on a transient "not connected". */
+export const ONLINE_RETRY_ATTEMPTS = 3;

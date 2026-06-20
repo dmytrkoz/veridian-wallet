@@ -1,6 +1,7 @@
 import type { Options } from "@wdio/types";
 import "dotenv/config";
 import { returnBoolean } from "../helpers/parse.js";
+import allureReporter from "@wdio/allure-reporter";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -158,7 +159,22 @@ export const config: Options.Testrunner = {
   afterScenario: async function (world, result, context) {
     const { driver } = await import("@wdio/globals");
     const appPackage = "org.cardanofoundation.idw";
-    
+
+    // On failure, attach a screenshot to the allure report so CI failures are
+    // diagnosable without re-running locally. Taken before the app is torn down.
+    if (!result.passed) {
+      try {
+        const png = await driver.takeScreenshot();
+        allureReporter.addAttachment(
+          "Screenshot on failure",
+          Buffer.from(png, "base64"),
+          "image/png"
+        );
+      } catch (e) {
+        console.warn("[WDIO] failure screenshot capture failed:", e);
+      }
+    }
+
     try {
       // Try direct switch to NATIVE_APP first (avoid getContexts() greedy scan)
       try {

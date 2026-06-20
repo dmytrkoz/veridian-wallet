@@ -3,6 +3,7 @@ import { bootAppAgent, teardownAppAgent } from "../setup";
 import { Agent } from "../../../src/core/agent/agent";
 import { CreationStatus } from "../../../src/core/agent/agent.types";
 import { CASE_TIMEOUT_MS } from "../constants";
+import { withOnlineRetry } from "../online";
 import {
   createAppMember,
   addVirtualMembers,
@@ -43,29 +44,36 @@ describe("multisig group (initiator) — app core vs real keria", () => {
       const groupId = new Salter({}).qb64;
 
       // --- Arrange: app member + group-scoped OOBI, then the virtual members ---
+      // createAppMember handles its own retry granularity (only the idempotent
+      // getOobi retries; createIdentifier is covered by the boot stable-online
+      // gate). The composite arrange ops below retry whole on an offline flip.
       const { memberAid, oobi } = await createAppMember(agent, {
         groupId,
         groupName,
         displayName: "Alice",
       });
 
-      const virtualMembers = await addVirtualMembers(agent, {
-        appAid: memberAid,
-        appOobi: oobi,
-        appName: "Alice",
-        groupId,
-        groupName,
-        aliases: members,
-      });
+      const virtualMembers = await withOnlineRetry(() =>
+        addVirtualMembers(agent, {
+          appAid: memberAid,
+          appOobi: oobi,
+          appName: "Alice",
+          groupId,
+          groupName,
+          aliases: members,
+        })
+      );
 
       // --- Act: app proposes the group; virtual members complete their side ---
-      const multisigId = await proposeGroup(agent, {
-        appAid: memberAid,
-        groupId,
-        signingThreshold: required,
-        rotationThreshold: recovery,
-        expectedMemberCount: members.length,
-      });
+      const multisigId = await withOnlineRetry(() =>
+        proposeGroup(agent, {
+          appAid: memberAid,
+          groupId,
+          signingThreshold: required,
+          rotationThreshold: recovery,
+          expectedMemberCount: members.length,
+        })
+      );
       expect(typeof multisigId).toBe("string");
 
       await virtualMembersComplete(virtualMembers, groupName);
