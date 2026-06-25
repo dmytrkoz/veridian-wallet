@@ -1,14 +1,22 @@
 import type { Options } from "@wdio/types";
 import "dotenv/config";
 import { returnBoolean } from "../helpers/parse.js";
+import allureReporter from "@wdio/allure-reporter";
 import * as fs from "fs";
 import * as path from "path";
+
+// Hosted-CI emulators flake on Appium session creation (UiAutomator2 cold-start
+// timing out, software-GPU ColorBuffer errors). Retry the whole spec and give the
+// session more time — but ONLY on CI (GitHub Actions sets CI=true). Local runs,
+// where the emulator is fast and stable, keep the tight defaults. Both are tunable
+// per-workflow via WDIO_SPEC_RETRIES / WDIO_CONNECTION_TIMEOUT.
+const isCI = !!process.env.CI;
 
 export const config: Options.Testrunner = {
   runner: "local",
   tsConfigPath: 'tsconfig.json',
   specs: ["../features/**/*.feature"],
-  specFileRetries: 0,
+  specFileRetries: Number(process.env.WDIO_SPEC_RETRIES ?? (isCI ? 1 : 0)),
   specFileRetriesDelay: 3,
   specFileRetriesDeferred: false,
   maxInstances: 1,
@@ -16,7 +24,9 @@ export const config: Options.Testrunner = {
   bail: 0,
   baseUrl: "LACK_OF_BASE_URL",
   waitforTimeout: 1500,
-  connectionRetryTimeout: 45000,
+  connectionRetryTimeout: Number(
+    process.env.WDIO_CONNECTION_TIMEOUT ?? (isCI ? 120000 : 45000)
+  ),
   connectionRetryCount: 3,
   services: [],
   framework: "cucumber",
@@ -158,7 +168,21 @@ export const config: Options.Testrunner = {
   afterScenario: async function (world, result, context) {
     const { driver } = await import("@wdio/globals");
     const appPackage = "org.cardanofoundation.idw";
-    
+
+    // On failure, capture the webview DOM first — it shows which testids are
+    // actually rendered, the most useful clue for an "element not found" (and
+    // the only window into a CI-only failure that can't be reproduced locally).
+    // The native screenshot is taken later, after switching out of the webview
+    // context (a screenshot in webview context comes back blank).
+    if (!result.passed) {
+      try {
+        const src = await driver.getPageSource();
+        allureReporter.addAttachment("Page source on failure", src, "text/xml");
+      } catch (e) {
+        console.warn("[WDIO] failure page-source capture failed:", e);
+      }
+    }
+
     try {
       // Try direct switch to NATIVE_APP first (avoid getContexts() greedy scan)
       try {
@@ -185,6 +209,20 @@ export const config: Options.Testrunner = {
           try {
             await driver.switchContext('NATIVE_APP');
           } catch (e) {}
+        }
+      }
+      // Now in native context: a screenshot captures the full device screen
+      // (what the app actually shows at the point of failure).
+      if (!result.passed) {
+        try {
+          const png = await driver.takeScreenshot();
+          allureReporter.addAttachment(
+            "Screenshot on failure",
+            Buffer.from(png, "base64"),
+            "image/png"
+          );
+        } catch (e) {
+          console.warn("[WDIO] failure screenshot capture failed:", e);
         }
       }
       await driver.terminateApp(appPackage);
