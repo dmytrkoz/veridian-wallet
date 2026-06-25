@@ -1,16 +1,7 @@
 Feature: Group Profile Multisig (Initiator and Members)
 
   Background:
-    Given user tap Get Started button on Onboarding screen
-    And user generate passcode on Passcode screen
-    And user skip Biometric popup if it exist
-    And skip Create Password screen
-    And user is on Connect to Veridian screen
-    And user navigates to SSI Agent Advanced Setup screen
-    And SSI Agent URLs are cleared
-    When user enters boot URL "default"
-    And user enters connect URL "default"
-    And user tap Validate button on SSI Agent Details screen
+    Given user is onboarded (seed) at profile setup
 
   @onboarding @profile @group @multisig @initiator
   Scenario Outline: Initiator creates <required>-of-<recovery> multisig group and it becomes active
@@ -25,9 +16,15 @@ Feature: Group Profile Multisig (Initiator and Members)
     And all members accept the group invitation
     Then the group status becomes "Active" when the group is ready
 
+    # @smoke marks the single representative row run on every CI (the rest are
+    # the threshold matrix, covered headless by integration + unit tests).
+    @smoke
     Examples:
       | required | recovery | members        |
       | 1        | 2        | Bob            |
+
+    Examples:
+      | required | recovery | members        |
       | 2        | 2        | Bob            |
       | 2        | 3        | Bob,Charlie    |
       | 3        | 3        | Bob,Charlie    |

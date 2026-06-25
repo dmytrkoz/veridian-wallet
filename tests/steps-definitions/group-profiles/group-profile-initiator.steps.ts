@@ -16,6 +16,17 @@ import {
 
 const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
 
+// The base config's waitforTimeout (1.5s) is too tight for a heavy multisig
+// screen transition on a loaded CI emulator, where the element renders in a few
+// seconds — the cause of the share-oobi-segment-button flake. Wait up to this on
+// transitions; it returns as soon as the element appears, so fast runs pay nothing.
+const SCREEN_TRANSITION_TIMEOUT = 15000;
+
+// A pasted member's OOBI is resolved against keria asynchronously after the
+// input modal closes; only that completion returns the app to the SetupMembers
+// tab. Allow extra time for it on a loaded CI emulator.
+const MEMBER_RESOLVE_TIMEOUT = 30000;
+
 type AliceInitiatorWorld = {
   aliceInitiatorGroupName?: string;
   aliceInitiatorGroupId?: string | null;
@@ -46,9 +57,25 @@ Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^
     await ProfileSetupScreen.waitForProfileSetupScreen();
     await ProfileSetupScreen.enterUsername("Alice");
     await ProfileSetupScreen.confirmButton.click();
-    await ProfileSetupScreen.waitForWelcomeScreen();
-    await expect(ProfileSetupScreen.continueButton).toBeDisplayed();
-    await ProfileSetupScreen.continueButton.click();
+    // FinishSetup (Welcome) may be skipped when the agent reconnects
+    // mid-wizard (e.g. seeded onboarding) and the app navigates straight to
+    // group-profile-setup. Tolerate both: click Continue only if Welcome shows.
+    // (Mirrors the joiner step's handling.)
+    await waitUpTo(
+      async () => {
+        const welcomeExists = await ProfileSetupScreen.welcomeTitle
+          .isExisting()
+          .catch(() => false);
+        const url = await browser.getUrl().catch(() => "");
+        return welcomeExists || url.includes("group-profile-setup");
+      },
+      15000
+    );
+    const urlAfterCreate = await browser.getUrl().catch(() => "");
+    if (!urlAfterCreate.includes("group-profile-setup")) {
+      await expect(ProfileSetupScreen.continueButton).toBeDisplayed();
+      await ProfileSetupScreen.continueButton.click();
+    }
 
     await waitUpTo(
       async () => {
@@ -60,12 +87,12 @@ Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^
 
     // Capture Alice's OOBI for members
     const provideTab = $("[data-testid='share-oobi-segment-button']");
-    await provideTab.waitForDisplayed();
+    await provideTab.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
     await provideTab.click();
     await installShareCapture();
 
     const shareButton = $(".share-profile-oobi .share-button");
-    await shareButton.waitForDisplayed();
+    await shareButton.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
     await shareButton.scrollIntoView?.().catch(() => { });
     await shareButton.click();
     const aliceOobiUrl = (await browser.execute(() => (window as unknown as { __lastSharedOobi?: string }).__lastSharedOobi)) as string | undefined;
@@ -124,7 +151,7 @@ When(/^Alice pastes all member OOBIs on the Scan tab$/, async function () {
   const scanTab = $("[data-testid='scan-profile-segment-button']");
 
   for (const [name, member] of Object.entries(world.virtualMembers)) {
-    await scanTab.waitForDisplayed();
+    await scanTab.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
     await scanTab.click();
 
     const oobiForApp = await member.instance.getOobi({
@@ -137,19 +164,28 @@ When(/^Alice pastes all member OOBIs on the Scan tab$/, async function () {
     if (await toastContainsText(GROUP_ID_MISMATCH_MSG)) {
       throw new Error(`Group ID mismatch for member ${name} — scan rejected.`);
     }
+
+    // Closing the paste modal does not mean the member is resolved: the app
+    // only leaves the Scan tab (re-showing the segment control, which holds
+    // share-oobi-segment-button) once the OOBI resolves against keria. Wait for
+    // that here so the next step isn't racing a still-active scanner — the cause
+    // of the CI-only "share-oobi-segment-button not displayed" failure.
+    await $("[data-testid='setup-members-segment']").waitForDisplayed({
+      timeout: MEMBER_RESOLVE_TIMEOUT,
+    });
   }
 
 });
 
 When(/^Alice initiates the group identifier$/, async function () {
   const provideTab = $("[data-testid='share-oobi-segment-button']");
-  await provideTab.waitForDisplayed();
+  await provideTab.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await provideTab.click();
   const initiateBtn = $("[data-testid='primary-button-setup-group-profile']");
-  await initiateBtn.waitForDisplayed();
+  await initiateBtn.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await initiateBtn.click();
   const alertConfirmBtn = $("[data-testid='alert-confirm-init-group-confirm-button']");
-  await alertConfirmBtn.waitForDisplayed();
+  await alertConfirmBtn.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await alertConfirmBtn.click();
 
   await waitUpTo(
@@ -182,7 +218,7 @@ When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async func
   }
   const requiredIncrease = $("[data-testid='requiredSigners-increase-threshold-button']");
   const recoveryIncrease = $("[data-testid='recoverySigners-increase-threshold-button']");
-  await requiredIncrease.waitForDisplayed();
+  await requiredIncrease.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   for (let i = 0; i < required; i++) {
     await requiredIncrease.click();
   }
@@ -190,13 +226,13 @@ When(/^Alice sets required and recovery signers to (\d+) and (\d+)$/, async func
     await recoveryIncrease.click();
   }
   const signerModalConfirm = $("[data-testid='primary-button-setup-signer-modal']");
-  await signerModalConfirm.waitForDisplayed();
+  await signerModalConfirm.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await signerModalConfirm.click();
 });
 
 When(/^Alice sends the group requests$/, async function () {
   const sendRequestBtn = $("[data-testid='primary-button-init-group']");
-  await sendRequestBtn.waitForDisplayed();
+  await sendRequestBtn.waitForDisplayed({ timeout: SCREEN_TRANSITION_TIMEOUT });
   await sendRequestBtn.click();
 });
 
