@@ -1,0 +1,95 @@
+name: integration-test
+
+# Headless multisig integration: the app's real Agent + real signify drive a
+# group ceremony to "Active" against a real KERIA stack in Node (no emulator).
+# Fast — a per-PR gate.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Least-privilege default for all jobs.
+permissions:
+  contents: read
+
+# Cancel a superseded run on a new commit to the same ref — also avoids two runs
+# colliding on the fixed keria container_name/port on a shared runner.
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  multisig-integration:
+    timeout-minutes: 20
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        # Enforces the WebView ES-floor es-x rules (and the rest) across all of
+        # src — the build-test workflow lints only src/core, so without this a
+        # post-Chrome-91 builtin in src/ui would slip past CI and white-screen.
+        run: npm run eslint
+
+      - name: Start KERIA + witnesses
+        # Only the backend the ceremony needs; skip the cred-issuance build.
+        run: docker compose up -d keria witnesses
+
+      - name: Wait for KERIA + witnesses to be ready
+        run: |
+          npx wait-on --timeout 120000 \
+            tcp:127.0.0.1:3901 \
+            tcp:127.0.0.1:3903 \
+            tcp:127.0.0.1:5642
+
+      - name: Run multisig integration tests
+        env:
+          KERIA_IP: 127.0.0.1
+        run: |
+          mkdir -p tests/.reports
+          npm run test:integration -- --json --outputFile=tests/.reports/integration-results.json
+
+      - name: Integration test summary
+        if: always()
+        # Render the jest JSON onto the run summary page so results are readable
+        # without downloading the artifact.
+        run: |
+          f=tests/.reports/integration-results.json
+          [ -f "$f" ] || { echo "No integration results file." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          {
+            echo "## Multisig integration"
+            jq -r '"Total: \(.numTotalTests) · Passed: \(.numPassedTests) · Failed: \(.numFailedTests)"' "$f"
+            echo ""
+            echo "| Test | Status | ms |"
+            echo "| --- | --- | --- |"
+            jq -r '.testResults[].assertionResults[] | "| \(.title) | \(.status) | \(.duration // 0) |"' "$f"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload integration report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: multisig-integration-results
+          path: tests/.reports/integration-results.json
+          if-no-files-found: warn
+
+      - name: Dump KERIA logs on failure
+        if: failure()
+        run: docker compose logs keria witnesses
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
