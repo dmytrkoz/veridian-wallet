@@ -27,6 +27,27 @@
       }
     },
     {
+      "files": ["**/*.ts", "**/*.tsx"],
+      "excludedFiles": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/__tests__/**"
+      ],
+      "rules": {
+        "es-x/no-array-string-prototype-at": "error",
+        "es-x/no-object-hasown": "error",
+        "es-x/no-string-prototype-replaceall": "error",
+        "es-x/no-promise-any": "error",
+        "es-x/no-array-prototype-findlast-findlastindex": "error",
+        "es-x/no-array-prototype-toreversed": "error",
+        "es-x/no-array-prototype-tosorted": "error",
+        "es-x/no-array-prototype-tospliced": "error",
+        "es-x/no-array-prototype-with": "error"
+      }
+    },
+    {
       "files": ["src/core/storage/sqliteStorage/migrations/**/*.ts"],
       "rules": {
         "no-console": "off"
@@ -39,7 +60,7 @@
     "sourceType": "module",
     "project": "./tsconfig.json"
   },
-  "plugins": ["react", "@typescript-eslint", "import", "jest"],
+  "plugins": ["react", "@typescript-eslint", "import", "jest", "es-x"],
   "rules": {
     "@typescript-eslint/no-duplicate-enum-values": "error",
     "@typescript-eslint/no-explicit-any": "warn",
