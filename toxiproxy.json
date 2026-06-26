@@ -1,0 +1,5 @@
+[
+  { "name": "keria_connect", "listen": "0.0.0.0:3901", "upstream": "keria:3901", "enabled": true },
+  { "name": "keria_agent", "listen": "0.0.0.0:3902", "upstream": "keria:3902", "enabled": true },
+  { "name": "keria_boot", "listen": "0.0.0.0:3903", "upstream": "keria:3903", "enabled": true }
+]

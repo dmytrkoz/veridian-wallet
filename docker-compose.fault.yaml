@@ -1,0 +1,36 @@
+# Fault-injection overlay — layer ONLY for negative/resilience jobs (e.g. offline).
+# Use it on top of the base compose:
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.fault.yaml \
+#     up -d keria witnesses toxiproxy
+#
+# It strips keria's host ports (`!reset`) and puts Toxiproxy in front on the same
+# 39xx, so the app routes through a programmable fault layer with NO app/config
+# change. The base compose alone (integration, multisig) keeps direct keria and
+# never starts Toxiproxy.
+#
+# TEST-ONLY: Toxiproxy is loopback-bound (its control API is UNAUTHENTICATED) and
+# digest-pinned (it sits in the middle of agent traffic). NEVER point at a real
+# backend.
+services:
+  keria:
+    ports: !reset []                       # drop the base host ports (compose >= 2.24)
+    expose: ["3901", "3902", "3903"]        # keria reachable only as keria:39xx
+
+  toxiproxy:
+    container_name: idw-toxiproxy
+    image: ghcr.io/shopify/toxiproxy@sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e # v2.12.0
+    # Wait for keria's admin port to be live (base compose healthcheck) before
+    # opening the proxy listeners — otherwise toxiproxy accepts TCP while the
+    # upstream is still booting and wait-on passes against a dead backend.
+    depends_on:
+      keria:
+        condition: service_healthy
+    command: ["-host=0.0.0.0", "-config=/toxiproxy.json"]
+    volumes:
+      - ./toxiproxy.json:/toxiproxy.json:ro
+    ports:
+      - "127.0.0.1:8474:8474"   # control API — localhost only
+      - "127.0.0.1:3901:3901"   # host 3901 -> keria:3901 (connect)
+      - "127.0.0.1:3902:3902"   # host 3902 -> keria:3902 (agent)
+      - "127.0.0.1:3903:3903"   # host 3903 -> keria:3903 (boot)
