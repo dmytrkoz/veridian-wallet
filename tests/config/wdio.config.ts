@@ -1,15 +1,16 @@
 import type { Options } from "@wdio/types";
 import "dotenv/config";
-import { returnBoolean } from "../helpers/parse.js";
 import allureReporter from "@wdio/allure-reporter";
 import * as fs from "fs";
 import * as path from "path";
+import { returnBoolean } from "../helpers/parse.js";
+import { t } from "./timeouts.js";
 
-// Hosted-CI emulators flake on Appium session creation (UiAutomator2 cold-start
-// timing out, software-GPU ColorBuffer errors). Retry the whole spec and give the
-// session more time — but ONLY on CI (GitHub Actions sets CI=true). Local runs,
-// where the emulator is fast and stable, keep the tight defaults. Both are tunable
-// per-workflow via WDIO_SPEC_RETRIES / WDIO_CONNECTION_TIMEOUT.
+// Hosted-CI emulators flake on Appium session creation (UiAutomator2 cold-start,
+// software-GPU ColorBuffer errors) and run slower than a local machine. On CI we
+// retry the whole spec (specFileRetries) and scale every e2e timeout via t() /
+// CI_TIMEOUT_FACTOR; local runs keep the tight defaults. Retries tunable via
+// WDIO_SPEC_RETRIES.
 const isCI = !!process.env.CI;
 
 export const config: Options.Testrunner = {
@@ -23,10 +24,8 @@ export const config: Options.Testrunner = {
   logLevel: "info",
   bail: 0,
   baseUrl: "LACK_OF_BASE_URL",
-  waitforTimeout: 1500,
-  connectionRetryTimeout: Number(
-    process.env.WDIO_CONNECTION_TIMEOUT ?? (isCI ? 120000 : 45000)
-  ),
+  waitforTimeout: t(1500),
+  connectionRetryTimeout: t(45000),
   connectionRetryCount: 3,
   services: [],
   framework: "cucumber",
@@ -60,7 +59,9 @@ export const config: Options.Testrunner = {
       "./tests/actions/**/*.ts",
     ],
     tags: "",
-    timeout: 100 * 1000,
+    // Per-step cap must scale with the inner e2e waits (some reach t(90000)=180s
+    // on CI); an unscaled 100s cap would kill a step before its scaled wait ends.
+    timeout: t(100 * 1000),
   },
   onPrepare: function (config, capabilities) {
     const screenshotsDir = path.join(process.cwd(), "tests", "screenshots");

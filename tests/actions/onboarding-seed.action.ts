@@ -1,5 +1,6 @@
 import { Given, Then, When } from "@wdio/cucumber-framework";
 import { browser, driver } from "@wdio/globals";
+import { t } from "../config/timeouts.js";
 import { switchToAppWebview } from "../helpers/webview.helper.js";
 import { getSSIAgentUrls } from "../helpers/ssi-agent-urls.helper.js";
 import PasscodeScreen from "../screen-objects/onboarding/passcode.screen.js";
@@ -65,7 +66,7 @@ async function seedThenLand(
           typeof (window as unknown as { __seedOnboarded?: unknown })
             .__seedOnboarded === "function"
       )) === true,
-    { timeout: 30000, timeoutMsg: "__seedOnboarded hook never appeared" }
+    { timeout: t(30000), timeoutMsg: "__seedOnboarded hook never appeared" }
   );
 
   // Seed (boot+connect [+ create identifier]) is async/network-bound; retry once.
@@ -132,7 +133,7 @@ async function seedThenLand(
       }
     },
     {
-      timeout: 60000,
+      timeout: t(60000),
       interval: 2000,
       timeoutMsg: "Webview did not re-attach after relaunch",
     }
@@ -146,7 +147,7 @@ async function seedThenLand(
     async () =>
       (await passcodePad().isExisting()) || (await target().isExisting()),
     {
-      timeout: 90000,
+      timeout: t(90000),
       interval: 1500,
       timeoutMsg: `Neither lock screen nor ${targetTestId} appeared after relaunch`,
     }
@@ -158,7 +159,7 @@ async function seedThenLand(
   }
 
   // Confirm we landed on the expected screen.
-  await target().waitForDisplayed({ timeout: 60000 });
+  await target().waitForDisplayed({ timeout: t(60000) });
 
   return seededAid;
 }
@@ -187,7 +188,7 @@ Given(/^user is onboarded \(seed\) at profile setup$/, async function () {
 
 Then(/^user can see the Home screen$/, async function () {
   await $('[data-testid="tab-button-home"]').waitForDisplayed({
-    timeout: 30000,
+    timeout: t(30000),
   });
 });
 
@@ -196,12 +197,12 @@ Then(/^user can see the Home screen$/, async function () {
 // screen. Demonstrates the fixture enabling a real post-onboarding test.
 When(/^user taps the Connections tab$/, async function () {
   const tab = $('[data-testid="tab-button-connections"]');
-  await tab.waitForDisplayed({ timeout: 30000 });
+  await tab.waitForDisplayed({ timeout: t(30000) });
   await tab.click();
 });
 
 Then(/^user can see the Connections screen$/, async function () {
   await $('[data-testid="add-connection-button"]').waitForDisplayed({
-    timeout: 30000,
+    timeout: t(30000),
   });
 });

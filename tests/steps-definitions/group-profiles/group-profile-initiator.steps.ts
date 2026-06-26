@@ -6,6 +6,7 @@ import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.sc
 import { RemoteJoiner } from "../../helpers/virtual-wallet.js";
 import { createVirtualWallet } from "../../helpers/virtual-wallet.factory.js";
 import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
+import { t } from "../../config/timeouts.js";
 import {
   toastContainsText,
   pasteOobiAndConfirm,
@@ -20,12 +21,12 @@ const GROUP_ID_MISMATCH_MSG = "Connection not part of this group";
 // screen transition on a loaded CI emulator, where the element renders in a few
 // seconds — the cause of the share-oobi-segment-button flake. Wait up to this on
 // transitions; it returns as soon as the element appears, so fast runs pay nothing.
-const SCREEN_TRANSITION_TIMEOUT = 15000;
+const SCREEN_TRANSITION_TIMEOUT = t(15000);
 
 // A pasted member's OOBI is resolved against keria asynchronously after the
 // input modal closes; only that completion returns the app to the SetupMembers
 // tab. Allow extra time for it on a loaded CI emulator.
-const MEMBER_RESOLVE_TIMEOUT = 30000;
+const MEMBER_RESOLVE_TIMEOUT = t(30000);
 
 type AliceInitiatorWorld = {
   aliceInitiatorGroupName?: string;
@@ -69,7 +70,7 @@ Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^
         const url = await browser.getUrl().catch(() => "");
         return welcomeExists || url.includes("group-profile-setup");
       },
-      15000
+      t(15000)
     );
     const urlAfterCreate = await browser.getUrl().catch(() => "");
     if (!urlAfterCreate.includes("group-profile-setup")) {
@@ -82,7 +83,7 @@ Given(/^Alice creates a group profile as initiator for (\d+)-of-(\d+) group "([^
         const url = await browser.getUrl();
         return url.includes("group-profile-setup");
       },
-      5000
+      t(5000)
     );
 
     // Capture Alice's OOBI for members
@@ -192,7 +193,7 @@ When(/^Alice initiates the group identifier$/, async function () {
     async () =>
       (await $("[data-testid='init-group-footer']").isDisplayed().catch(() => false)) ||
       (await $("[data-testid='signer-alert-card-block']").isDisplayed().catch(() => false)),
-    15000
+    t(15000)
   );
 });
 

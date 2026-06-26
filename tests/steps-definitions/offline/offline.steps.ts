@@ -1,5 +1,6 @@
 import { After, When, Then } from "@wdio/cucumber-framework";
 import { $ } from "@wdio/globals";
+import { t } from "../../config/timeouts.js";
 import { stopKeria, startKeria } from "../../helpers/keria-network.js";
 
 // The full-screen offline overlay is AppOffline, rendered through
@@ -16,7 +17,7 @@ When(/^the KERIA backend goes offline$/, async function () {
 Then(/^the app shows the offline screen$/, async function () {
   // The poller (~2s cadence) hits the stopped keria, the failed fetch is
   // recognised as a network error, the agent flips offline and AppOffline mounts.
-  await $(OFFLINE_PAGE).waitForDisplayed({ timeout: 30000 });
+  await $(OFFLINE_PAGE).waitForDisplayed({ timeout: t(30000) });
 });
 
 When(/^the KERIA backend comes back online$/, async function () {
@@ -35,6 +36,6 @@ Then(/^the app leaves the offline screen$/, async function () {
   // The agent's connect() retry loop (~1s) reconnects once keria is ready;
   // generous timeout covers the container's cold start. The overlay unmounts and
   // the Home dashboard is interactive again.
-  await $(OFFLINE_PAGE).waitForDisplayed({ reverse: true, timeout: 90000 });
-  await $(HOME_TAB).waitForDisplayed({ timeout: 30000 });
+  await $(OFFLINE_PAGE).waitForDisplayed({ reverse: true, timeout: t(90000) });
+  await $(HOME_TAB).waitForDisplayed({ timeout: t(30000) });
 });
