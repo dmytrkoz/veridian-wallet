@@ -9,15 +9,27 @@ const APP_ID = "org.cardanofoundation.idw";
 const DEV_PASSCODE = [1, 1, 1, 1, 1, 1]; // devPreload writes "111111"
 
 /**
- * The app re-requests notification permission after the relaunch — a native
- * dialog that sits on top of the webview and blocks Home. The wdio config's
- * beforeScenario already dismisses this at scenario start; we reuse the same
- * "Don't allow" selector convention here because the mid-Given relaunch
- * re-triggers it. Best-effort — never throws.
+ * Dismiss the post-relaunch notification-permission dialog IF it appears. With
+ * autoGrantPermissions it usually does not, so we check the foreground package
+ * cheaply first and only search for the deny button when the permission UI is
+ * actually up — avoiding a ~3s full-UI-tree scan for an absent element. The wdio
+ * config's beforeScenario also handles it at scenario start. Best-effort — never throws.
  */
 async function dismissNotificationPermission(): Promise<void> {
+  // Android-only: the deny button is an android.widget.Button and the
+  // foreground-package check is a UiAutomator2 command — neither applies on iOS
+  // (the original android-class selector never matched iOS either). If iOS e2e is
+  // revived, its permission alerts need the autoAcceptAlerts cap / driver.acceptAlert.
+  if (!driver.isAndroid) return;
   try {
     await driver.switchContext("NATIVE_APP");
+    // Searching for an ABSENT element forces a full UI-tree scan (~3s on the app's
+    // large tree). A permission dialog runs in its own package, so check the
+    // foreground package first (cheap) and only search the small, fast dialog tree
+    // when it's actually up. autoGrantPermissions usually suppresses the dialog, so
+    // the common path is ~instant instead of ~3s. Still dismisses a real dialog.
+    const pkg = (await driver.getCurrentPackage()) || "";
+    if (!/permissioncontroller|packageinstaller/.test(pkg)) return;
     const denyButton = await driver.$(
       '//android.widget.Button[@text="Don\'t allow" or @text="DON\'T ALLOW" or @text="Not now" or @text="Deny" or @text="DENY"]'
     );
@@ -134,7 +146,7 @@ async function seedThenLand(
     },
     {
       timeout: t(60000),
-      interval: 2000,
+      interval: 500,
       timeoutMsg: "Webview did not re-attach after relaunch",
     }
   );
