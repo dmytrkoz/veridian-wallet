@@ -28,8 +28,11 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
-    - name: Run ESLint (Core Only)
-      run: npx eslint src/core --ext .ts,.tsx
+    - name: Run ESLint
+      # Lint all of src (not just src/core) so the es-x WebView ES-floor rules are
+      # enforced on src/ui too — a post-Chrome-91 builtin there would white-screen
+      # the app on old devices and slip past a src/core-only lint.
+      run: npx eslint src --ext .ts,.tsx
 
     - name: Run unit tests
 

@@ -38,12 +38,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint
-        # Enforces the WebView ES-floor es-x rules (and the rest) across all of
-        # src — the build-test workflow lints only src/core, so without this a
-        # post-Chrome-91 builtin in src/ui would slip past CI and white-screen.
-        run: npm run eslint
-
       - name: Start KERIA + witnesses
         # Only the backend the ceremony needs; skip the cred-issuance build.
         run: docker compose up -d keria witnesses
