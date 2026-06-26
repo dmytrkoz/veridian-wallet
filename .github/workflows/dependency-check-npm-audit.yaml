@@ -19,7 +19,7 @@ env:
 
 jobs:
   depcheck:
-    runs-on: ${{ fromJson(vars.RUNS_ON) }}
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
 
     steps:
     - name: Checkout
