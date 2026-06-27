@@ -1,4 +1,5 @@
 import { browser } from "@wdio/globals";
+import { t } from "../../config/timeouts";
 
 export async function pageContainsText(msg: string): Promise<boolean> {
   return (await browser.execute((m: string) => {
@@ -44,7 +45,7 @@ export async function dismissLockScreenIfPresent(): Promise<void> {
     await browser.waitUntil(
       async () =>
         !(await $("[data-testid='tertiary-button-lock-page']").isExisting().catch(() => false)),
-      { timeout: 5000, interval: 200 }
+      { timeout: t(5000), interval: 200 }
     );
   }
 }
@@ -102,7 +103,7 @@ export async function getConnectedMembersProgressText(): Promise<string> {
 
 export async function pasteOobiAndConfirm(oobi: string, useJsClick = false): Promise<void> {
   const pasteButton = $("[data-testid='paste-content-button']");
-  await pasteButton.waitForDisplayed();
+  await pasteButton.waitForDisplayed({ timeout: t(15000) });
   await pasteButton.scrollIntoView?.().catch(() => { });
   if (useJsClick) {
     await browser.execute(() => {
@@ -114,13 +115,15 @@ export async function pasteOobiAndConfirm(oobi: string, useJsClick = false): Pro
   }
 
   const scanInput = $("[data-testid='scan-input']");
-  await scanInput.waitForDisplayed();
+  await scanInput.waitForDisplayed({ timeout: t(15000) });
   const nativeInput = await scanInput.shadow$("input");
   await nativeInput.setValue(oobi);
   const confirmBtn = $("[data-testid='scan-input-modal'] [data-testid='action-button']");
-  await confirmBtn.waitForDisplayed();
+  await confirmBtn.waitForDisplayed({ timeout: t(15000) });
   await confirmBtn.click();
-  await $("[data-testid='scan-input-modal']").waitForExist({ reverse: true, timeout: 5000 });
+  // Modal closes once keria resolves the pasted OOBI — slow under cold-emulator
+  // CPU load, so scale with t() (the unscaled 5s was the CI first-attempt flake).
+  await $("[data-testid='scan-input-modal']").waitForExist({ reverse: true, timeout: t(5000) });
 }
 
 export async function assertGroupProfileActiveInProfilesList(displayName: string): Promise<void> {
