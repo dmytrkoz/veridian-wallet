@@ -14,3 +14,19 @@ Feature: Offline behaviour on KERIA network failure
     Then the app shows the offline screen
     When the KERIA backend comes back online
     Then the app leaves the offline screen
+
+  # Resilience: a connection drop DURING an operation (the DistributedReliability
+  # contract) - the queued create is retried on reconnect and still converges.
+  @offline @nightly
+  Scenario: Connection drops mid-creation - the profile still completes on reconnect
+    Given user is onboarded (seed) at profile setup
+    When Alice creates an individual profile "AliceRecover" with a mid-creation KERIA outage
+    Then the individual profile "AliceRecover" eventually shows as complete
+
+  # Resilience: rapid connection instability (cut<->restore storm) must not leave
+  # the app stuck - it settles back online.
+  @offline @nightly
+  Scenario: Rapid connection flapping settles back online
+    Given user is onboarded (seed)
+    When the KERIA connection flaps
+    Then the app settles back online

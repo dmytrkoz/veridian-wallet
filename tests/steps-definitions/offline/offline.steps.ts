@@ -1,7 +1,7 @@
 import { After, When, Then } from "@wdio/cucumber-framework";
 import { $ } from "@wdio/globals";
 import { t } from "../../config/timeouts.js";
-import { cutConnection, restore } from "../../helpers/faults.js";
+import { cutConnection, restore, flap } from "../../helpers/faults.js";
 
 // The full-screen offline overlay is AppOffline, rendered through
 // ResponsivePageLayout with pageId="offline" -> data-testid="offline-page".
@@ -39,6 +39,18 @@ After({ tags: "@offline" }, async () => {
 Then(/^the app leaves the offline screen$/, async function () {
   // The agent's connect() retry loop (~1s) reconnects as soon as the proxy is back.
   // The overlay unmounts and the Home dashboard is interactive again.
+  await $(OFFLINE_PAGE).waitForDisplayed({ reverse: true, timeout: t(90000) });
+  await $(HOME_TAB).waitForDisplayed({ timeout: t(30000) });
+});
+
+When(/^the KERIA connection flaps$/, async function () {
+  // Cut/restore the connect path 5x at ~1s spacing, leaving it restored. Stresses
+  // the reconnect handling (the poller and @OnlineOnly each spawn a connect() loop).
+  await flap("keria_connect", 5, 1000);
+});
+
+Then(/^the app settles back online$/, async function () {
+  // After the storm the overlay must clear and Home must be interactive again.
   await $(OFFLINE_PAGE).waitForDisplayed({ reverse: true, timeout: t(90000) });
   await $(HOME_TAB).waitForDisplayed({ timeout: t(30000) });
 });

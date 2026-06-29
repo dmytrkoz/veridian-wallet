@@ -51,6 +51,20 @@ export async function cutConnection(proxy: ProxyName): Promise<void> {
   });
 }
 
+/** Flap the path: cut/restore `cycles` times at `ms` spacing, leaving it restored. */
+export async function flap(
+  proxy: ProxyName,
+  cycles = 5,
+  ms = 1000
+): Promise<void> {
+  for (let i = 0; i < cycles; i++) {
+    await cutConnection(proxy);
+    await new Promise((r) => setTimeout(r, ms));
+    await restore(proxy);
+    await new Promise((r) => setTimeout(r, ms));
+  }
+}
+
 /** Restore a proxy to healthy: clear all toxics and re-enable. */
 export async function restore(proxy: ProxyName): Promise<void> {
   const toxics = (await (await api(`/proxies/${proxy}/toxics`)).json()) as Array<{
