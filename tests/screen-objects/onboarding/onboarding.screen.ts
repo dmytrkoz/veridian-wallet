@@ -1,4 +1,5 @@
 import { expect } from "expect-webdriverio";
+import { t } from "../../config/timeouts";
 
 export class OnboardingScreen {
   get getStartedButton() {
@@ -10,13 +11,13 @@ export class OnboardingScreen {
   }
 
   async loads() {
-    await this.getStartedButton.waitForDisplayed({ timeout: 2000 });
+    await this.getStartedButton.waitForDisplayed({ timeout: t(2000) });
     await expect(this.getStartedButton).toBeDisplayed();
     await expect(this.iAlreadyHaveAWalletButton).toBeDisplayed();
   }
 
   async tapOnGetStartedButton() {
-    await this.getStartedButton.waitForDisplayed({ timeout: 2000 });
+    await this.getStartedButton.waitForDisplayed({ timeout: t(2000) });
     await expect(this.getStartedButton).toBeDisplayed();
     await expect(this.getStartedButton).toBeEnabled();
     await this.getStartedButton.click();

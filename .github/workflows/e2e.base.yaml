@@ -64,7 +64,16 @@ jobs:
 
                   name:    ($tier + (if $bk.primary then "" else "-" + $bk.label end) + (if ($a | length) > 1 then "-a" + $api else "" end)),
                   tagexpr: ("(" + $p + ") and (" + $bk.filter + ")"),
-                  avd_key: ("avd-" + $api + "-google_apis-x86_64")
+                  avd_key: ("avd-" + $api + "-google_apis-x86_64"),
+
+                  # The newest WebView (api-36) under the CI software-GPU renders and
+                  # animates slower than a31/a34, so e2e wait budgets tuned for a34
+                  # time out on it (button "not displayed", nav "condition not met")
+                  # and the retries blow the Run-E2E cap. Give the slowest image a
+                  # bigger CI_TIMEOUT_FACTOR (scales every t() wait) and a longer step
+                  # budget; the other images keep the proven defaults.
+                  ci_factor:   (if $api == "36" then 3 else 2 end),
+                  run_timeout: (if $api == "36" then 22 else 15 end)
                 } | del(.filter, .primary, .label)
             ] }')
           echo "matrix=$M" >> "$GITHUB_OUTPUT"
@@ -138,7 +147,9 @@ jobs:
   e2e:
     name: e2e (${{ matrix.name }})
     needs: [setup, e2e-build]
-    timeout-minutes: 30
+    # Headroom for the slowest leg: a36's 22-min Run-E2E cap + setup + a possible
+    # cold AVD-snapshot build (cache miss) must fit under the job timeout.
+    timeout-minutes: 35
     runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
     strategy:
       fail-fast: false        # one leg failing must not cancel the others
@@ -243,11 +254,15 @@ jobs:
 
       - name: Run E2E (${{ matrix.name }})
         # Hard cap so a stuck emulator/test fails fast (logs become readable)
-        # instead of idling to the job timeout.
-        timeout-minutes: 15
+        # instead of idling to the job timeout. Per-leg (matrix.run_timeout): the
+        # slower a36 gets more so a clean-but-slow run is not guillotined.
+        timeout-minutes: ${{ matrix.run_timeout }}
         uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         env:
           NODE_OPTIONS: "--max_old_space_size=8192"
+          # Scale every e2e wait for this leg's device (a36 renders slower; see the
+          # matrix.ci_factor note). t() multiplies its base waits by this.
+          CI_TIMEOUT_FACTOR: ${{ matrix.ci_factor }}
           # Pass the tag expression as an env var (the wdio config reads it into
           # cucumberOpts.tags). Going via the `script:` CLI would route it through
           # `npm run -- ` where npm re-shells the value and the parens break.
