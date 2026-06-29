@@ -101,3 +101,51 @@ allure generate tests/.reports/allure-results -o tests/.reports/allure-report --
 ```
 allure open tests/.reports/allure-report
 ```
+
+## Integration tests (headless, real KERIA)
+
+Headless Node tests that drive the app's real Agent + signify through a multisig
+group ceremony to "Active" against a real KERIA stack (no emulator).
+
+Prerequisites: Node, Docker + Compose.
+
+1. Start the backend:
+```
+docker compose up -d keria witnesses
+```
+2. Run the tests (KERIA reachable on localhost):
+```
+KERIA_IP=127.0.0.1 npm run test:integration
+```
+3. Tear down:
+```
+docker compose down -v
+```
+
+Expected: 2 passing (a smoke check + a 2-of-3 group reaching Active).
+
+## Offline / resilience e2e (Toxiproxy fault injection)
+
+Proves the app detects loss of its KERIA cloud agent, shows the offline screen,
+and recovers on reconnect. The outage is injected at the Toxiproxy layer (KERIA
+stays up).
+
+Prerequisites: the emulator + Appium + `.env` setup from the E2E section above,
+plus Docker + Compose.
+
+1. Start KERIA behind the Toxiproxy fault overlay:
+```
+docker compose -f docker-compose.yaml -f docker-compose.fault.yaml up -d keria witnesses toxiproxy
+```
+2. Build the e2e app and start Appium as in the E2E section. The test reaches the
+   Toxiproxy admin API at `127.0.0.1:8474` (override with `TOXIPROXY_API`).
+3. Run the offline feature:
+```
+npm run wdio:android:s24ultra -- --spec ./tests/features/offline/keria-offline.feature
+```
+4. Tear down:
+```
+docker compose -f docker-compose.yaml -f docker-compose.fault.yaml down -v
+```
+
+Expected: 5 steps passing (offline screen shown on cut, left on reconnect).
