@@ -1,0 +1,30 @@
+name: e2e-scheduled
+
+# Nightly multi-device e2e. Thin caller of e2e.base.yaml with the "nightly" profile:
+# the api-level spread (31/34/36) exercises WebView/Chrome from the Chrome-91 floor
+# to the newest Chrome - coverage the per-PR api-34 run cannot give. The combined
+# Allure report is kept as the e2e-allure-combined artifact (no Pages).
+
+on:
+  schedule:
+    # 03:00 UTC daily. Timing is best-effort: GitHub delays scheduled runs under
+    # high load (esp. the top of the hour) and may drop them; runs use the latest
+    # commit on the default branch.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Don't overlap two nightly runs (a manual dispatch on top of the cron) - saves
+# runner cost, and avoids a keria container_name/port clash on a self-hosted pool.
+concurrency:
+  group: e2e-scheduled
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    uses: ./.github/workflows/e2e.base.yaml
+    with:
+      profile: nightly

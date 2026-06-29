@@ -1,3 +1,5 @@
+# @nightly: widens nightly coverage; no KERIA backend needed (pre-SSI intro/terms flow).
+@nightly
 Feature: Onboarding Intro Screen
 
   Background:

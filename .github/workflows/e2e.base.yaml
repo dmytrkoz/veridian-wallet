@@ -1,0 +1,359 @@
+name: e2e.base
+
+# Reusable e2e engine (workflow_call only). Two thin callers drive it:
+#  - e2e-test.yaml      (per-PR)   -> profile=pr      : api-34, 2 legs
+#  - e2e-scheduled.yaml (nightly)  -> profile=nightly : api {31,34,36}, 6 legs
+# The combined Allure report is delivered as an artifact (not Pages).
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: 'Matrix profile: "pr" (narrow, api-34) or "nightly" (device spread)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # Emit the matrix JSON for the requested profile - single source of truth for
+  # what runs when.
+  setup:
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Build matrix for profile=${{ inputs.profile }}
+        id: set
+        run: |
+          set -euo pipefail
+          # Each entry is a docker BACKEND setup + the tag-filter that routes
+          # scenarios to it - NOT a test suite (tests are selected by tags). The
+          # only thing forcing a separate emulator job is the backend: @offline
+          # needs the toxiproxy overlay, everything else uses plain keria.
+          #   primary:true  -> the main lane; its leg name is the profile TIER
+          #                    (smoke on PR, nightly on the nightly build, since it
+          #                    runs more than smoke there).
+          #   others        -> leg name is "<tier>-<label>" (e.g. smoke-offline).
+          # Add a 3rd backend by appending an entry with its own label/filter/
+          # services/compose - the name + tag expression derive automatically.
+          backends='[
+            {"primary":true,                     "filter":"not @offline","services":"keria witnesses",           "compose":""},
+            {"primary":false, "label":"offline", "filter":"@offline",     "services":"keria witnesses toxiproxy", "compose":"-f docker-compose.yaml -f docker-compose.fault.yaml"}
+          ]'
+          case "${{ inputs.profile }}" in
+            # Device/WebView spread (Chrome-91 floor -> newest) + the nightly extras.
+            nightly) profile_expr="@smoke or @nightly"; tier="nightly"; apis='["31","34","36"]' ;;
+            # PR profile: the fast smoke subset on a single device.
+            pr)      profile_expr="@smoke";             tier="smoke";   apis='["34"]' ;;
+            # Fail loud on a typo'd caller rather than silently running the PR matrix.
+            *) echo "::error::unknown profile '${{ inputs.profile }}' (expected pr|nightly)"; exit 1 ;;
+          esac
+          # Cross-product backends x apis. Leg name = <tier>[-<label> for non-primary]
+          # [-a<api> only when >1 api]. tagexpr ANDs the profile tier with the
+          # backend's filter.
+          M=$(jq -cn --argjson b "$backends" --argjson a "$apis" --arg p "$profile_expr" --arg tier "$tier" '
+            { include: [
+                $b[] as $bk | $a[] as $api |
+                $bk + {
+                  api_level: $api,
+                  target: "google_apis",
+                  arch: "x86_64",
+                  profile: (if $api == "31" then "" else "pixel_6" end),  # skin is cosmetic; api-31 stays on the default
+
+                  name:    ($tier + (if $bk.primary then "" else "-" + $bk.label end) + (if ($a | length) > 1 then "-a" + $api else "" end)),
+                  tagexpr: ("(" + $p + ") and (" + $bk.filter + ")"),
+                  avd_key: ("avd-" + $api + "-google_apis-x86_64")
+                } | del(.filter, .primary, .label)
+            ] }')
+          echo "matrix=$M" >> "$GITHUB_OUTPUT"
+          echo "## e2e matrix (profile=${{ inputs.profile }})" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.include[] | "- \(.name): api \(.api_level)  [\(.tagexpr)]"' <<<"$M" >> "$GITHUB_STEP_SUMMARY"
+
+  # Build the debug APK ONCE (web bundle via cap sync is embedded in it, and
+  # KERIA_IP=10.0.2.2 is identical for every leg), then fan out to the test legs -
+  # instead of rebuilding the APK (~12 min of gradle) inside each leg.
+  e2e-build:
+    timeout-minutes: 25
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      - name: Delete unnecessary tools 🔧
+        if: ${{ runner.os == 'Linux' }}
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          android: false
+          tool-cache: true
+          dotnet: true
+          haskell: true
+          swap-storage: true
+          docker-images: false
+          large-packages: false
+
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project for E2E
+        timeout-minutes: 8
+        run: |
+          export LANG=en_US.UTF-8
+          export KERIA_IP=10.0.2.2
+          npm run build:e2e
+
+      - name: Build Android APK
+        timeout-minutes: 12
+        run: |
+          cd android
+          ./gradlew assembleDebug --build-cache --parallel
+          cd ..
+          APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
+          # Normalise to a stable name so the legs can reference it directly.
+          cp "$APK" app-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-debug
+          path: app-debug.apk
+          if-no-files-found: error
+
+  e2e:
+    name: e2e (${{ matrix.name }})
+    needs: [setup, e2e-build]
+    timeout-minutes: 30
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false        # one leg failing must not cancel the others
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    steps:
+      - name: Delete unnecessary tools 🔧
+        if: ${{ runner.os == 'Linux' }}
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          android: false
+          tool-cache: true
+          dotnet: true
+          haskell: true
+          swap-storage: true
+          docker-images: false
+          large-packages: false
+
+      - name: Enable KVM group perms
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls /dev/kvm
+
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        # wdio/appium client deps only - no java/gradle here (APK comes from e2e-build).
+        run: npm ci
+
+      - name: Download prebuilt APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: app-debug
+          path: .
+      - name: Point APP_PATH at the downloaded APK
+        run: echo "APP_PATH=$PWD/app-debug.apk" >> "$GITHUB_ENV"
+
+      # Start KERIA + Appium up front so they warm while the AVD snapshot restores.
+      - name: Start KERIA + witnesses
+        run: docker compose ${{ matrix.compose }} up -d ${{ matrix.services }}
+
+      - name: Start Appium
+        run: |
+          # Pin to the version proven locally - `npm install -g appium` (latest)
+          # drifted to 3.5.2 and broke the insecure-flag parse; 3.5.0 matches the
+          # local hardening env for CI<->local parity.
+          npm install -g appium@3.5.0
+          appium driver install uiautomator2 || appium driver update uiautomator2
+          # chromedriver_autodownload: appium fetches the chromedriver matching the
+          # emulator's WebView at runtime to switch into the app's webview context.
+          # This is what makes the api-level spread work with no per-leg chromedriver
+          # config. Appium 3 rejects the bare unscoped feature unless
+          # --relaxed-security is also set; safe here - appium binds localhost on an
+          # ephemeral runner, no untrusted client.
+          appium --log-level error --relaxed-security --allow-insecure chromedriver_autodownload &
+
+      - name: Wait for KERIA + Appium to be ready
+        run: |
+          npx wait-on --timeout 120000 \
+            tcp:127.0.0.1:3901 \
+            tcp:127.0.0.1:3903 \
+            tcp:127.0.0.1:5642 \
+            http-get://127.0.0.1:4723/status
+
+      # Per-api AVD+snapshot cache (key carries the api-level) -> later runs restore
+      # instead of cold-creating.
+      - name: AVD cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: ${{ matrix.avd_key }}
+
+      - name: Create AVD + generate snapshot for caching
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
+        with:
+          api-level: ${{ matrix.api_level }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: ${{ matrix.profile }}
+          force-avd-creation: false
+          emulator-boot-timeout: 420
+          emulator-options: -no-window -no-audio -gpu swiftshader_indirect -no-boot-anim
+          disable-animations: false
+          disk-size: 6000M
+          heap-size: 600M
+          script: echo "Generated AVD snapshot for caching."
+
+      - name: Run E2E (${{ matrix.name }})
+        # Hard cap so a stuck emulator/test fails fast (logs become readable)
+        # instead of idling to the job timeout.
+        timeout-minutes: 15
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
+        env:
+          NODE_OPTIONS: "--max_old_space_size=8192"
+          # Pass the tag expression as an env var (the wdio config reads it into
+          # cucumberOpts.tags). Going via the `script:` CLI would route it through
+          # `npm run -- ` where npm re-shells the value and the parens break.
+          E2E_TAG_EXPRESSION: ${{ matrix.tagexpr }}
+        with:
+          api-level: ${{ matrix.api_level }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: ${{ matrix.profile }}
+          force-avd-creation: false
+          emulator-boot-timeout: 420
+          emulator-options: -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save -no-boot-anim
+          disable-animations: true
+          disk-size: 6000M
+          heap-size: 600M
+          # Selection is the E2E_TAG_EXPRESSION env var above (cucumberOpts.tags).
+          script: npm run wdio:android:s24ultra
+
+      # Without api_level as a parameter, Allure gives the same scenario the same
+      # historyId across api levels and collapses them into one test-with-retries,
+      # masking an api-31 (Chrome-91) regression behind a passing api-34/36 run.
+      - name: Tag Allure results with api-level
+        if: always()
+        run: |
+          dir=tests/.reports/allure-results
+          [ -d "$dir" ] || exit 0
+          shopt -s nullglob
+          for f in "$dir"/*-result.json; do
+            tmp=$(mktemp)
+            jq --arg api "${{ matrix.api_level }}" \
+              '.parameters = ((.parameters // []) + [{"name":"api_level","value":$api}])' \
+              "$f" > "$tmp" && mv "$tmp" "$f"
+          done
+
+      # Per-leg: upload ONLY the raw results; e2e-report merges + generates once.
+      # The leg name (which carries the api-level) keeps the artifacts distinct.
+      - name: Upload Allure results (${{ matrix.name }})
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: allure-results-${{ matrix.name }}
+          path: tests/.reports/allure-results
+          if-no-files-found: warn
+
+      - name: Dump KERIA logs on failure
+        if: failure()
+        # ${{ matrix.services }} so the offline legs also dump toxiproxy logs.
+        run: docker compose ${{ matrix.compose }} logs ${{ matrix.services }}
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Same compose files so the offline legs tear down toxiproxy too.
+          pkill -f appium || true
+          docker compose ${{ matrix.compose }} down -v
+
+  # Merge all legs' Allure results into ONE downloadable report artifact. Runs even
+  # on e2e failure (the failure report is worth keeping). Delivered as an artifact
+  # (not GitHub Pages) because Pages is unavailable / public-only on private repos;
+  # on a public repo this artifact can be published to Pages if a URL is wanted.
+  e2e-report:
+    needs: e2e
+    if: always()
+    runs-on: ${{ vars.RUNS_ON && fromJson(vars.RUNS_ON) || 'ubuntu-latest' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        # Provides the allure CLI (allure-commandline) used by `npx allure generate`.
+        run: npm ci
+
+      - name: Download all Allure results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: allure-results-*
+          merge-multiple: true
+          path: tests/.reports/allure-results
+
+      - name: Generate combined Allure report
+        # No `|| true`: a generate failure must fail the job rather than upload an
+        # empty/stale report as green.
+        run: npx allure generate tests/.reports/allure-results --clean -o tests/.reports/allure-report
+
+      - name: Combined E2E summary
+        if: always()
+        run: |
+          f=tests/.reports/allure-report/widgets/summary.json
+          [ -f "$f" ] || { echo "No allure summary." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          {
+            echo "## E2E combined report (profile=${{ inputs.profile }})"
+            jq -r '.statistic | "Total: \(.total) · Passed: \(.passed) · Failed: \(.failed) · Broken: \(.broken) · Skipped: \(.skipped)"' "$f"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload combined Allure report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-allure-combined
+          path: tests/.reports/allure-report
+          if-no-files-found: warn

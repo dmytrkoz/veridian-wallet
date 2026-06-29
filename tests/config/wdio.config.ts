@@ -58,7 +58,9 @@ export const config: Options.Testrunner = {
       "./tests/steps-definitions/**/*.ts",
       "./tests/actions/**/*.ts",
     ],
-    tags: "",
+    // Tag expression via env, not a CLI arg: npm re-shells `npm run -- ` args and
+    // the parens in "(@a or @b) and (not @c)" break. The matrix sets it per leg.
+    tags: process.env.E2E_TAG_EXPRESSION || "",
     // Per-step cap must scale with the inner e2e waits (some reach t(90000)=180s
     // on CI); an unscaled 100s cap would kill a step before its scaled wait ends.
     timeout: t(100 * 1000),
@@ -83,6 +85,8 @@ export const config: Options.Testrunner = {
       console.warn("[Setup] Process suppression failed, but proceeding...");
     }
   },
+  // No cross-feature app reset needed: wdio runs each .feature in its own session
+  // (fresh app via noReset:false on session init).
   beforeScenario: async function (scenario) {
     try {
       const { driver, browser } = await import("@wdio/globals");

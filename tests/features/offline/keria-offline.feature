@@ -6,7 +6,8 @@ Feature: Offline behaviour on KERIA network failure
   app's poller hits the failed fetch, flips offline, and the AppOffline overlay
   mounts; on restore the reconnect loop re-onlines and the overlay unmounts.
 
-  @offline
+  # @offline: backend routing marker - selects the toxiproxy fault-injection leg.
+  @offline @smoke @nightly
   Scenario: KERIA outage shows the offline screen and recovers on reconnect
     Given user is onboarded (seed)
     When the KERIA backend goes offline
