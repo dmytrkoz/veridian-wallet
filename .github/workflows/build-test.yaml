@@ -34,6 +34,11 @@ jobs:
       # the app on old devices and slip past a src/core-only lint.
       run: npx eslint src --ext .ts,.tsx
 
+    # tsc --noEmit covers the whole project incl. tests/, which the build
+    # (ts-loader, src graph only) never type-checks.
+    - name: Typecheck
+      run: npm run typecheck
+
     - name: Run unit tests
 
       run: npm run test
