@@ -198,23 +198,59 @@ Given(/^user is onboarded \(seed\) at profile setup$/, async function () {
   this.seededAid = await seedThenLand({ atProfileSetup: true }, "profile-setup-page");
 });
 
-Then(/^user can see the Home screen$/, async function () {
-  await $('[data-testid="tab-button-home"]').waitForDisplayed({
+// `at profile setup` seed sets IS_SETUP_PROFILE; init routes to Profile Setup
+// only when no default profile exists.
+Then(/^user can see the Profile Setup screen with no profile$/, async function () {
+  await $('[data-testid="profile-setup-page"]').waitForDisplayed({
     timeout: t(30000),
   });
+  if (await $('[data-testid="avatar-button"]').isExisting()) {
+    throw new Error("Expected no active-profile avatar on the no-profile setup screen");
+  }
 });
 
-// Current-UX navigation: the Connections tab + screen still exist in the
-// restructured app (src/ui/pages/Connections), unlike the obsolete Identifiers
-// screen. Demonstrates the fixture enabling a real post-onboarding test.
-When(/^user taps the Connections tab$/, async function () {
-  const tab = $('[data-testid="tab-button-connections"]');
-  await tab.waitForDisplayed({ timeout: t(30000) });
-  await tab.click();
-});
+// AppWrapper hydrates the seeded identifier as the active/default profile on
+// relaunch. Count by .profiles-list-item-name (one per profile) - status chips
+// would inflate a raw text count. Match on name + count, not "not pending":
+// a fresh identifier can briefly be PENDING.
+Then(
+  /^user can see exactly one individual profile named "([^"]+)"$/,
+  async function (name: string) {
+    await browser.waitUntil(
+      async () => {
+        const title = $('[data-testid^="tab-title-"]');
+        return (
+          (await title.isExisting()) && (await title.getText()).includes(name)
+        );
+      },
+      { timeout: t(30000), interval: 500, timeoutMsg: `Home greeting did not show "${name}"` }
+    );
 
-Then(/^user can see the Connections screen$/, async function () {
-  await $('[data-testid="add-connection-button"]').waitForDisplayed({
-    timeout: t(30000),
-  });
-});
+    const avatar = $('[data-testid="avatar-button"]');
+    await avatar.waitForDisplayed({ timeout: t(30000) });
+    await avatar.click();
+    await $('[data-testid="profiles"]').waitForDisplayed({ timeout: t(30000) });
+
+    await browser.waitUntil(
+      async () => {
+        const names = (await browser.execute(() => {
+          const root = document.querySelector('[data-testid="profiles"]');
+          if (!root) return null;
+          return Array.from(root.querySelectorAll(".profiles-list-item-name")).map(
+            (e) => (e.textContent || "").trim()
+          );
+        })) as string[] | null;
+        return (
+          Array.isArray(names) &&
+          names.length === 1 &&
+          names[0].toLowerCase() === name.toLowerCase()
+        );
+      },
+      {
+        timeout: t(15000),
+        interval: 500,
+        timeoutMsg: `Expected exactly one individual profile named "${name}"`,
+      }
+    );
+  }
+);

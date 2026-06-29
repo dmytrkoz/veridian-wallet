@@ -1,21 +1,14 @@
 Feature: Fast onboard via seed fixture
 
-  Proves the dev-only fast-onboard fixture: instead of the ~50s UI onboarding
-  precondition, the app is seeded programmatically (~19s, deterministic) and
-  lands on the current Home dashboard — then exercises a current-UX screen.
+  Dev-only fast-onboard seed (~19s vs ~50s UI onboarding); covers two distinct
+  post-onboarding states.
 
-  @seed @fixture
-  Scenario: Seeded onboarding (empty) lands on the Home screen
-    Given user is onboarded (seed)
-    Then user can see the Home screen
+  @seed @fixture @nightly
+  Scenario: Seeded onboarding with no profile lands on Profile Setup
+    Given user is onboarded (seed) at profile setup
+    Then user can see the Profile Setup screen with no profile
 
-  @seed @fixture
-  Scenario: Seeded onboarding with an identifier lands on the Home screen
-    Given user is onboarded (seed) with an identifier
-    Then user can see the Home screen
-
-  @seed @fixture
-  Scenario: Seeded onboarding can reach a current post-onboarding screen
-    Given user is onboarded (seed) with an identifier
-    When user taps the Connections tab
-    Then user can see the Connections screen
+  @seed @fixture @nightly
+  Scenario: Seeded onboarding with one individual profile shows that profile
+    Given user is onboarded (seed) with an identifier "Alice"
+    Then user can see exactly one individual profile named "Alice"
