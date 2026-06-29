@@ -1,5 +1,6 @@
 import { expect } from "expect-webdriverio";
 import { browser } from "@wdio/globals";
+import { t } from "../../config/timeouts";
 
 export class TermsAndPrivacyScreen {
   get acceptButton() {
@@ -30,7 +31,7 @@ export class TermsAndPrivacyScreen {
     const buttons = await $$("[data-testid='term-segment-button']");
     const buttonCount = await buttons.length;
     if (buttonCount > 0) {
-      await buttons[0].waitForClickable({ timeout: 5000 });
+      await buttons[0].waitForClickable({ timeout: t(5000) });
       await buttons[0].click();
     } else {
       throw new Error("Terms tab button not found");
@@ -42,7 +43,7 @@ export class TermsAndPrivacyScreen {
     const buttons = await $$("[data-testid='term-segment-button']");
     const buttonCount = await buttons.length;
     if (buttonCount > 1) {
-      await buttons[1].waitForClickable({ timeout: 5000 });
+      await buttons[1].waitForClickable({ timeout: t(5000) });
       await buttons[1].click();
     } else {
       throw new Error("Privacy tab button not found");
@@ -182,7 +183,7 @@ export class TermsAndPrivacyScreen {
     if (!clicked) {
       // Fallback: Try WebdriverIO click
       try {
-        await this.acceptButton.waitForClickable({ timeout: 5000 });
+        await this.acceptButton.waitForClickable({ timeout: t(5000) });
         await this.acceptButton.click();
       } catch (error) {
         throw new Error(`Failed to click Accept button. Error: ${error}`);
