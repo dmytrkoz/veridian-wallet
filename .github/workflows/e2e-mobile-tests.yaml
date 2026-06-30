@@ -1,4 +1,11 @@
 name: e2e-mobile-tests
+
+# iOS e2e is currently unsupported (the suite runs on Android only).
+# The iOS Appium drivers (xcuitest/safari/chromium) were removed from package.json
+# during the Appium 3 migration, so `npm ci` no longer installs them and this
+# workflow will not run as-is. To revive the iOS e2e, re-add Appium 3 compatible
+# drivers (appium-xcuitest-driver@^11, appium-safari-driver@^5, appium-chromium-driver@^3).
+
 on:
   workflow_dispatch:
 jobs:

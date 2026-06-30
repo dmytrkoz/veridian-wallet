@@ -22,10 +22,11 @@ npm run test
 - Node.js and npm
 - Appium installed locally (in case if @wdio/appium-service will not work as expected)
   - install appium e.g. ``` brew install appium ```
-  - install driver for ios ``` appium driver install xcuitest ```
   - install driver for android ``` appium driver install uiautomator2 ```
-  - install driver for chrome ``` appium driver install chromium ```
-  - install driver for safari ``` appium driver install safari ```
+
+> Note: only the Android e2e is currently supported.
+> The iOS/Safari/Chromium Appium drivers were removed from `package.json` during the Appium 3 migration, so the iOS e2e (`e2e-mobile-tests.yaml`, `npm run wdio:ios:*`) is unsupported and will not run until they are re-added.
+> To revive iOS, add Appium 3 compatible drivers: `appium-xcuitest-driver@^11`, `appium-safari-driver@^5`, `appium-chromium-driver@^3`.
 - Android Emulator for [Samsung Galaxy S23 Ultra](https://developer.samsung.com/galaxy-emulator-skin/guide.html) is configured or iOS Simulator for [iPhone 15 Pro / 15 Pro Max](https://developer.apple.com/documentation/xcode/installing-additional-simulator-runtimes)
 - Create .env file in your local root project folder with APP_PATH, and KERIA_IP when the app must reach Keria on the host (e.g. emulator/simulator or physical device).
 ```

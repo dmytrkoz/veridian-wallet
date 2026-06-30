@@ -204,18 +204,17 @@ jobs:
 
       - name: Start Appium
         run: |
-          # Pin to the version proven locally - `npm install -g appium` (latest)
-          # drifted to 3.5.2 and broke the insecure-flag parse; 3.5.0 matches the
-          # local hardening env for CI<->local parity.
-          npm install -g appium@3.5.0
-          appium driver install uiautomator2 || appium driver update uiautomator2
+          # appium (3.5.0) + the uiautomator2 driver (8.0.0) are pinned in
+          # package.json and installed by `npm ci`; appium 3 auto-registers drivers
+          # declared as npm dependencies, so no global install or `appium driver
+          # install` is needed - npx runs the project-local server.
           # chromedriver_autodownload: appium fetches the chromedriver matching the
           # emulator's WebView at runtime to switch into the app's webview context.
           # This is what makes the api-level spread work with no per-leg chromedriver
           # config. Appium 3 rejects the bare unscoped feature unless
           # --relaxed-security is also set; safe here - appium binds localhost on an
           # ephemeral runner, no untrusted client.
-          appium --log-level error --relaxed-security --allow-insecure chromedriver_autodownload &
+          npx appium --log-level error --relaxed-security --allow-insecure chromedriver_autodownload &
 
       - name: Wait for KERIA + Appium to be ready
         run: |
