@@ -5,7 +5,7 @@
 export const POLL_INTERVAL_MS = 2000;
 
 /** Max wait for a multisig group to reach "Active" (creationStatus COMPLETE).
- *  Generous: the 3-of-3 ceremony observed ~35s end-to-end. */
+ *  Generous: the 2-of-3 ceremony observed ~33s end-to-end. */
 export const GROUP_ACTIVE_TIMEOUT_MS = 90000;
 
 /** Max wait for a virtual member to receive + accept the group invitation. */

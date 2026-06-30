@@ -8,10 +8,8 @@
  * ceremony starts (locally keria is fast and it never fires).
  */
 import { Agent } from "../../src/core/agent/agent";
+import { pollUntil } from "../helpers/poll";
 import { ONLINE_WAIT_TIMEOUT_MS, STABLE_ONLINE_MS } from "./constants";
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms));
 
 /**
  * Resolve once the agent has stayed online continuously for stableMs — riding
@@ -21,20 +19,21 @@ export async function waitForStableOnline(
   stableMs = STABLE_ONLINE_MS,
   timeoutMs = ONLINE_WAIT_TIMEOUT_MS
 ): Promise<void> {
-  const start = Date.now();
   let onlineSince: number | null = null;
-  while (true) {
-    if (Agent.isOnline) {
+  await pollUntil(
+    async () => {
+      if (!Agent.isOnline) {
+        onlineSince = null;
+        return false;
+      }
       onlineSince ??= Date.now();
-      if (Date.now() - onlineSince >= stableMs) return;
-    } else {
-      onlineSince = null;
+      return Date.now() - onlineSince >= stableMs;
+    },
+    {
+      timeoutMs,
+      intervalMs: 250,
+      onTimeout: () =>
+        `agent did not stay online for ${stableMs}ms within ${timeoutMs}ms`,
     }
-    if (Date.now() - start >= timeoutMs) {
-      throw new Error(
-        `agent did not stay online for ${stableMs}ms within ${timeoutMs}ms`
-      );
-    }
-    await sleep(250);
-  }
+  );
 }
