@@ -149,4 +149,9 @@ npm run wdio:android:s24ultra -- --spec ./tests/features/offline/keria-offline.f
 docker compose -f docker-compose.yaml -f docker-compose.fault.yaml down -v
 ```
 
+> Note: start each run against a clean KERIA.
+> The dev seed is deterministic (same passcode produces the same agent), so identifiers created in a previous run persist in KERIA's `keria-data` volume and a re-run can fail with "Must not be a name already in use".
+> Recreate KERIA between runs by combining the `down -v` from step 4 with the `up` from step 1.
+> CI is immune to this because its KERIA is ephemeral (a fresh container per leg).
+
 Expected: 5 steps passing (offline screen shown on cut, left on reconnect).
