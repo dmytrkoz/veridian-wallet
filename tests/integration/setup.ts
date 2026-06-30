@@ -32,6 +32,11 @@ export async function bootAppAgent(): Promise<Agent> {
 
   const agent = Agent.agent;
   await agent.setupLocalDependencies();
+  // Seed the post-onboarding app state (passcode, APP_ALREADY_INIT, seed verified)
+  // exactly as the product and the e2e seed do (devSeedOnboarded also calls this),
+  // so the headless agent's pre-state matches a real onboarded wallet. The explicit
+  // fresh bran above is preserved - devPreload sets a bran only when absent.
+  await agent.devPreload();
   if (!Agent.isOnline) {
     await agent.bootAndConnect({ bootUrl, url: connectUrl });
   }

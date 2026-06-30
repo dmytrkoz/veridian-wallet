@@ -5,6 +5,7 @@ import { browser, driver } from "@wdio/globals";
 import ProfileSetupScreen from "../../screen-objects/onboarding/profile-setup.screen.js";
 import { RemoteJoiner } from "../../helpers/virtual-wallet.js";
 import { createVirtualWallet } from "../../helpers/virtual-wallet.factory.js";
+import { completeGroupAsMembers } from "../../helpers/multisig-ceremony.js";
 import { getKeriaUrlsForTestRunner } from "../../helpers/ssi-agent-urls.helper.js";
 import { t } from "../../config/timeouts.js";
 import {
@@ -242,24 +243,8 @@ When(/^all members accept the group invitation$/, async function () {
   if (!world.virtualMembers) throw new Error("No virtual members to accept invitations");
   if (!world.aliceInitiatorGroupName) throw new Error("No aliceInitiatorGroupName");
 
-  for (const member of Object.values(world.virtualMembers)) {
-    await member.instance.acceptGroupInvitation(60000, world.aliceInitiatorGroupName);
-  }
-  for (const member of Object.values(world.virtualMembers)) {
-    await member.instance.waitPendingOperations();
-  }
-  // propose their endorsement before processing incoming ones.
-  for (const member of Object.values(world.virtualMembers)) {
-    await member.instance.authorizeGroupAgents(world.aliceInitiatorGroupName);
-  }
-  // every member processes all incoming endorsements and anchors them locally.
-  console.log("Members processing incoming endorsements...");
-  for (const member of Object.values(world.virtualMembers)) {
-    await member.instance.processIncomingGroupAgentsEndorcements(world.aliceInitiatorGroupName);
-  }
-  for (const member of Object.values(world.virtualMembers)) {
-    await member.instance.waitPendingOperations();
-  }
+  const members = Object.values(world.virtualMembers).map((m) => m.instance);
+  await completeGroupAsMembers(members, world.aliceInitiatorGroupName);
 });
 
 Then(/^the group status becomes "Active" when the group is ready$/, async function () {

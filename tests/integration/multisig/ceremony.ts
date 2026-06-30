@@ -12,6 +12,7 @@ import {
   type MultisigConnectionDetails,
 } from "../../../src/core/agent/agent.types";
 import { pollUntil } from "../../helpers/poll";
+import { completeGroupAsMembers } from "../../helpers/multisig-ceremony";
 import {
   DEFAULT_THEME,
   GROUP_ACTIVE_TIMEOUT_MS,
@@ -129,21 +130,7 @@ export async function virtualMembersComplete(
   members: VirtualWallet[],
   groupName: string
 ): Promise<void> {
-  for (const m of members) {
-    await m.acceptGroupInvitation(INVITATION_ACCEPT_TIMEOUT_MS, groupName);
-  }
-  for (const m of members) {
-    await m.waitPendingOperations();
-  }
-  for (const m of members) {
-    await m.authorizeGroupAgents(groupName);
-  }
-  for (const m of members) {
-    await m.processIncomingGroupAgentsEndorcements(groupName);
-  }
-  for (const m of members) {
-    await m.waitPendingOperations();
-  }
+  await completeGroupAsMembers(members, groupName, INVITATION_ACCEPT_TIMEOUT_MS);
 }
 
 /**

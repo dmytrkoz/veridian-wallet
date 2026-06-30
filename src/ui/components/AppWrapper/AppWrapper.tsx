@@ -860,13 +860,14 @@ const AppWrapper = (props: { children: ReactNode }) => {
         await agent.devPreload();
       }
 
-      // DEV/E2E ONLY: expose a seed hook so e2e tests can fast-onboard,
-      // skipping the ~50s UI onboarding precondition. webpack DefinePlugin
-      // inlines `process.env`, so Terser folds this guard and dead-code-
-      // eliminates the block (plus the now-unused devSeedOnboarded import) in
-      // the prod build — `build:release`, ENVIRONMENT=prod. NOTE: the non-prod
-      // bundles (build / build:cap, ENVIRONMENT=remote) deliberately retain it.
-      if (process.env.ENVIRONMENT !== "prod") {
+      // E2E ONLY: expose a seed hook so e2e tests can fast-onboard, skipping the
+      // ~50s UI onboarding precondition. Gated to ENVIRONMENT=local (build:local /
+      // build:e2e) only - this hook boots an agent and writes secure storage, so it
+      // must never ship in a distributable build. webpack DefinePlugin inlines
+      // `process.env`, so Terser folds this guard and dead-code-eliminates the block
+      // (plus the now-unused devSeedOnboarded import) from both the staging build
+      // (ENVIRONMENT=remote) and the release build (ENVIRONMENT=prod).
+      if (process.env.ENVIRONMENT === "local") {
         (
           window as unknown as {
             __seedOnboarded?: (opts: {
