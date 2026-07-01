@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Build matrix for profile=${{ inputs.profile }}
         id: set
+        env:
+          PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
           # Each entry is a docker BACKEND setup + the tag-filter that routes
@@ -42,13 +44,13 @@ jobs:
             {"primary":true,                     "filter":"not @offline","services":"keria witnesses",           "compose":""},
             {"primary":false, "label":"offline", "filter":"@offline",     "services":"keria witnesses toxiproxy", "compose":"-f docker-compose.yaml -f docker-compose.fault.yaml"}
           ]'
-          case "${{ inputs.profile }}" in
+          case "$PROFILE" in
             # Device/WebView spread (Chrome-91 floor -> newest) + the nightly extras.
             nightly) profile_expr="@smoke or @nightly"; tier="nightly"; apis='["31","34","36"]' ;;
             # PR profile: the fast smoke subset on a single device.
             pr)      profile_expr="@smoke";             tier="smoke";   apis='["34"]' ;;
             # Fail loud on a typo'd caller rather than silently running the PR matrix.
-            *) echo "::error::unknown profile '${{ inputs.profile }}' (expected pr|nightly)"; exit 1 ;;
+            *) echo "::error::unknown profile '$PROFILE' (expected pr|nightly)"; exit 1 ;;
           esac
           # Cross-product backends x apis. Leg name = <tier>[-<label> for non-primary]
           # [-a<api> only when >1 api]. tagexpr ANDs the profile tier with the
@@ -77,7 +79,7 @@ jobs:
                 } | del(.filter, .primary, .label)
             ] }')
           echo "matrix=$M" >> "$GITHUB_OUTPUT"
-          echo "## e2e matrix (profile=${{ inputs.profile }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "## e2e matrix (profile=$PROFILE)" >> "$GITHUB_STEP_SUMMARY"
           jq -r '.include[] | "- \(.name): api \(.api_level)  [\(.tagexpr)]"' <<<"$M" >> "$GITHUB_STEP_SUMMARY"
 
   # Build the debug APK ONCE (web bundle via cap sync is embedded in it, and
@@ -200,7 +202,10 @@ jobs:
 
       # Start KERIA + Appium up front so they warm while the AVD snapshot restores.
       - name: Start KERIA + witnesses
-        run: docker compose ${{ matrix.compose }} up -d ${{ matrix.services }}
+        env:
+          COMPOSE_ARGS: ${{ matrix.compose }}
+          SERVICES: ${{ matrix.services }}
+        run: docker compose ${COMPOSE_ARGS} up -d ${SERVICES}
 
       - name: Start Appium
         run: |
@@ -285,13 +290,15 @@ jobs:
       # masking an api-31 (Chrome-91) regression behind a passing api-34/36 run.
       - name: Tag Allure results with api-level
         if: always()
+        env:
+          API_LEVEL: ${{ matrix.api_level }}
         run: |
           dir=tests/.reports/allure-results
           [ -d "$dir" ] || exit 0
           shopt -s nullglob
           for f in "$dir"/*-result.json; do
             tmp=$(mktemp)
-            jq --arg api "${{ matrix.api_level }}" \
+            jq --arg api "$API_LEVEL" \
               '.parameters = ((.parameters // []) + [{"name":"api_level","value":$api}])' \
               "$f" > "$tmp" && mv "$tmp" "$f"
           done
@@ -308,15 +315,21 @@ jobs:
 
       - name: Dump KERIA logs on failure
         if: failure()
-        # ${{ matrix.services }} so the offline legs also dump toxiproxy logs.
-        run: docker compose ${{ matrix.compose }} logs ${{ matrix.services }}
+        env:
+          COMPOSE_ARGS: ${{ matrix.compose }}
+          SERVICES: ${{ matrix.services }}
+        # COMPOSE_ARGS and SERVICES are safely expanded by the shell.
+        # we omit quotes around them to allow argument-splitting for empty or multiple options.
+        run: docker compose ${COMPOSE_ARGS} logs ${SERVICES}
 
       - name: Cleanup
         if: always()
+        env:
+          COMPOSE_ARGS: ${{ matrix.compose }}
         run: |
           # Same compose files so the offline legs tear down toxiproxy too.
           pkill -f appium || true
-          docker compose ${{ matrix.compose }} down -v
+          docker compose ${COMPOSE_ARGS} down -v
 
   # Merge all legs' Allure results into ONE downloadable report artifact. Runs even
   # on e2e failure (the failure report is worth keeping). Delivered as an artifact
@@ -356,11 +369,13 @@ jobs:
 
       - name: Combined E2E summary
         if: always()
+        env:
+          PROFILE: ${{ inputs.profile }}
         run: |
           f=tests/.reports/allure-report/widgets/summary.json
           [ -f "$f" ] || { echo "No allure summary." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
           {
-            echo "## E2E combined report (profile=${{ inputs.profile }})"
+            echo "## E2E combined report (profile=$PROFILE)"
             jq -r '.statistic | "Total: \(.total) · Passed: \(.passed) · Failed: \(.failed) · Broken: \(.broken) · Skipped: \(.skipped)"' "$f"
           } >> "$GITHUB_STEP_SUMMARY"
 
