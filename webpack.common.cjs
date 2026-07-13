@@ -4,6 +4,8 @@ const CopyPlugin = require("copy-webpack-plugin");
 const webpack = require("webpack");
 const { CleanWebpackPlugin } = require("clean-webpack-plugin");
 const NodePolyfillPlugin = require("node-polyfill-webpack-plugin");
+const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin");
+const ESLintPlugin = require("eslint-webpack-plugin");
 require("dotenv").config({ path: "./.env" });
 const config = {
   entry: {
@@ -19,7 +21,17 @@ const config = {
       },
       {
         test: /\.(ts|tsx)$/,
-        use: "ts-loader",
+        use: {
+          loader: "ts-loader",
+          options: {
+            // Type checking runs in a separate process via
+            // fork-ts-checker-webpack-plugin (see plugins below). This
+            // also stops ts-loader from rebuilding compilation.errors,
+            // which silently dropped other plugins' reports (it keeps
+            // only webpack.WebpackError instances).
+            transpileOnly: true,
+          },
+        },
         exclude: /node_modules/,
       },
       {
@@ -98,6 +110,43 @@ const config = {
       Buffer: ["buffer", "Buffer"],
     }),
     new NodePolyfillPlugin(),
+    // Type checks the src program in a separate process; the build
+    // fails on type errors like it did when ts-loader checked types.
+    // Tests are excluded: they are not part of the bundle and were not
+    // type checked by ts-loader either (they sat outside the module
+    // graph).
+    new ForkTsCheckerWebpackPlugin({
+      // Synchronous also in dev mode, so type errors block the dev
+      // compilation exactly like they did when ts-loader checked types
+      // (the dev server runs with the error overlay disabled).
+      async: false,
+      typescript: {
+        configOverwrite: {
+          include: ["src"],
+          exclude: [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "**/*.spec.ts",
+            "**/*.spec.tsx",
+            "**/__tests__/**",
+            "**/__mocks__/**",
+          ],
+        },
+      },
+    }),
+    // Fails the build when src uses ES features unsupported by the
+    // .browserslistrc targets, using the compat-only ESLint config.
+    new ESLintPlugin({
+      context: __dirname,
+      files: "src",
+      extensions: ["ts", "tsx"],
+      // No result cache: ESLint's cache key hashes the ESLint config
+      // only, so a .browserslistrc change would keep serving stale
+      // "clean" results. The compat-only lint is cheap (~5s).
+      cache: false,
+      useEslintrc: false,
+      overrideConfigFile: path.join(__dirname, ".eslintrc.compat.cjs"),
+    }),
   ],
   infrastructureLogging: {
     level: "info",
