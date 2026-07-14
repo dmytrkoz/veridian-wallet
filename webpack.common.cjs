@@ -142,7 +142,10 @@ const config = {
       extensions: ["ts", "tsx"],
       // No result cache: ESLint's cache key hashes the ESLint config
       // only, so a .browserslistrc change would keep serving stale
-      // "clean" results. The compat-only lint is cheap (~5s).
+      // "clean" results. This lint is type-aware (the compat config sets
+      // parserOptions.project so es-x prototype-method rules such as
+      // no-array-prototype-at can resolve receiver types), so it parses a
+      // full TypeScript program on each run rather than being a cheap pass.
       cache: false,
       useEslintrc: false,
       overrideConfigFile: path.join(__dirname, ".eslintrc.compat.cjs"),

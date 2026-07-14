@@ -35,11 +35,9 @@
         "**/*.spec.tsx",
         "**/__tests__/**"
       ],
+      "extends": ["@automattic/eslint-config-target-es/rc/builtins"],
       "rules": {
-        "ecmascript-compat/compat": [
-          "error",
-          { "polyfills": ["Error.cause"] }
-        ]
+        "es-x/no-error-cause": "off"
       }
     },
     {
@@ -55,7 +53,7 @@
     "sourceType": "module",
     "project": "./tsconfig.json"
   },
-  "plugins": ["react", "@typescript-eslint", "import", "jest", "ecmascript-compat"],
+  "plugins": ["react", "@typescript-eslint", "import", "jest"],
   "rules": {
     "@typescript-eslint/no-duplicate-enum-values": "error",
     "@typescript-eslint/no-explicit-any": "warn",
